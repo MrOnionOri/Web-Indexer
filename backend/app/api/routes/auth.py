@@ -36,7 +36,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if user.status != UserStatus.approved:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"User status is {user.status.value}")
+        err_msg = f"Tu acceso está restringido (Estado: {user.status.value})."
+        if user.status_reason:
+            err_msg += f" Razón: {user.status_reason}"
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=err_msg)
 
     permissions = get_effective_permissions(db, user)
     return TokenResponse(access_token=create_access_token(user.id, permissions))

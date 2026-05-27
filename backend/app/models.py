@@ -58,6 +58,7 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(String(255))
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.pending, index=True)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     template_assignments: Mapped[list["UserPermissionTemplate"]] = relationship(back_populates="user")
     permission_overrides: Mapped[list["UserPermissionOverride"]] = relationship(back_populates="user")

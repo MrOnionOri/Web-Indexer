@@ -21,6 +21,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserOverrideRead(BaseModel):
+    permission_id: str
+    permission_code: str
+    effect: OverrideEffect
+
+
 class UserRead(BaseModel):
     id: str
     email: str
@@ -31,6 +37,8 @@ class UserRead(BaseModel):
     template_ids: list[str] = []
     template_names: list[str] = []
     permissions: list[str] = []
+    overrides: list[UserOverrideRead] = []
+    status_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -55,9 +63,24 @@ class TemplateRead(BaseModel):
     permissions: list[str] = []
 
 
+class UserCreateRequest(BaseModel):
+    email: EmailStr
+    full_name: str = Field(min_length=2, max_length=160)
+    password: str = Field(min_length=10, max_length=128)
+    status: UserStatus = UserStatus.approved
+    template_ids: list[str] = []
+
+
+class UserUpdateRequest(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
+
+
 class UserApprovalRequest(BaseModel):
     status: UserStatus
     template_ids: list[str] = []
+    status_reason: str | None = None
+
 
 
 class PermissionOverrideRequest(BaseModel):

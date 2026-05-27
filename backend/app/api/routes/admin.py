@@ -19,6 +19,9 @@ from app.schemas import (
     TemplateRead,
     UserApprovalRequest,
     UserRead,
+    UserOverrideRead,
+    UserCreateRequest,
+    UserUpdateRequest,
 )
 from app.services.permissions import get_effective_permissions
 
@@ -43,6 +46,7 @@ def update_user_approval(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.status = payload.status
+    user.status_reason = payload.status_reason
     db.execute(delete(UserPermissionTemplate).where(UserPermissionTemplate.user_id == user.id))
     for template_id in payload.template_ids:
         if not db.get(PermissionTemplate, template_id):
@@ -53,6 +57,82 @@ def update_user_approval(
     db.commit()
     db.refresh(user)
     return serialize_admin_user(db, user)
+
+
+@router.post("/users", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+def create_user(
+    payload: UserCreateRequest,
+    actor: User = Depends(require_permission("users:approve")),
+    db: Session = Depends(get_db),
+):
+    existing = db.scalar(select(User).where(User.email == payload.email))
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    from app.core.security import hash_password
+    user = User(
+        email=payload.email,
+        full_name=payload.full_name,
+        hashed_password=hash_password(payload.password),
+        status=payload.status,
+    )
+    db.add(user)
+    db.flush()
+
+    for template_id in payload.template_ids:
+        if not db.get(PermissionTemplate, template_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Template not found: {template_id}")
+        db.add(UserPermissionTemplate(user_id=user.id, template_id=template_id))
+
+    db.add(AuditLog(actor_user_id=actor.id, action="users.created_manually", target_type="user", target_id=user.id))
+    db.commit()
+    db.refresh(user)
+    return serialize_admin_user(db, user)
+
+
+@router.patch("/users/{user_id}", response_model=UserRead)
+def update_user(
+    user_id: str,
+    payload: UserUpdateRequest,
+    actor: User = Depends(require_permission("users:approve")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.full_name is not None:
+        user.full_name = payload.full_name
+    if payload.email is not None:
+        if payload.email != user.email:
+            existing = db.scalar(select(User).where(User.email == payload.email))
+            if existing:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
+        user.email = payload.email
+
+    db.add(AuditLog(actor_user_id=actor.id, action="users.updated", target_type="user", target_id=user.id))
+    db.commit()
+    db.refresh(user)
+    return serialize_admin_user(db, user)
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: str,
+    actor: User = Depends(require_permission("users:approve")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    db.execute(delete(UserPermissionOverride).where(UserPermissionOverride.user_id == user.id))
+    db.execute(delete(UserPermissionTemplate).where(UserPermissionTemplate.user_id == user.id))
+
+    db.delete(user)
+    db.add(AuditLog(actor_user_id=actor.id, action="users.deleted", target_type="user", target_id=user_id))
+    db.commit()
+
 
 
 @router.post("/users/{user_id}/permission-overrides", status_code=status.HTTP_204_NO_CONTENT)
@@ -79,6 +159,30 @@ def set_permission_override(
         db.add(UserPermissionOverride(user_id=user_id, permission_id=payload.permission_id, effect=payload.effect))
 
     db.add(AuditLog(actor_user_id=actor.id, action="users.permission_override_set", target_type="user", target_id=user_id))
+    db.commit()
+
+
+@router.delete("/users/{user_id}/permission-overrides/{permission_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_permission_override(
+    user_id: str,
+    permission_id: str,
+    actor: User = Depends(require_permission("users:permissions")),
+    db: Session = Depends(get_db),
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    override = db.scalar(
+        select(UserPermissionOverride).where(
+            UserPermissionOverride.user_id == user_id,
+            UserPermissionOverride.permission_id == permission_id,
+        )
+    )
+    if not override:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
+
+    db.delete(override)
+    db.add(AuditLog(actor_user_id=actor.id, action="users.permission_override_deleted", target_type="user", target_id=user_id))
     db.commit()
 
 
@@ -117,6 +221,17 @@ def serialize_admin_user(db: Session, user: User) -> UserRead:
         .where(UserPermissionTemplate.user_id == user.id)
         .order_by(PermissionTemplate.name)
     ).all()
+
+    overrides_db = db.execute(
+        select(Permission.id, Permission.code, UserPermissionOverride.effect)
+        .join(UserPermissionOverride, UserPermissionOverride.permission_id == Permission.id)
+        .where(UserPermissionOverride.user_id == user.id)
+    ).all()
+    overrides_list = [
+        UserOverrideRead(permission_id=row[0], permission_code=row[1], effect=row[2])
+        for row in overrides_db
+    ]
+
     return UserRead(
         id=user.id,
         email=user.email,
@@ -127,4 +242,7 @@ def serialize_admin_user(db: Session, user: User) -> UserRead:
         template_ids=[template.id for template in assigned_templates],
         template_names=[template.name for template in assigned_templates],
         permissions=get_effective_permissions(db, user),
+        overrides=overrides_list,
+        status_reason=user.status_reason,
     )
+
