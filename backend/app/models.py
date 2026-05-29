@@ -44,6 +44,12 @@ class ProjectStatus(str, enum.Enum):
     archived = "archived"
 
 
+class WikiPageStatus(str, enum.Enum):
+    draft = "draft"
+    published = "published"
+    archived = "archived"
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -59,6 +65,9 @@ class User(Base, TimestampMixin):
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.pending, index=True)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    must_reset_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_reset_token: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     template_assignments: Mapped[list["UserPermissionTemplate"]] = relationship(back_populates="user")
     permission_overrides: Mapped[list["UserPermissionOverride"]] = relationship(back_populates="user")
@@ -129,6 +138,35 @@ class RegisteredApp(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(Text, default="")
     homepage_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True)
+
+
+class KnowledgeSpace(Base, TimestampMixin):
+    __tablename__ = table_name("knowledge_spaces")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    name: Mapped[str] = mapped_column(String(140), unique=True)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"))
+
+    pages: Mapped[list["KnowledgePage"]] = relationship(back_populates="space")
+
+
+class KnowledgePage(Base, TimestampMixin):
+    __tablename__ = table_name("knowledge_pages")
+    __table_args__ = (UniqueConstraint("space_id", "slug", name="uq_knowledge_page_space_slug"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    space_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('knowledge_spaces')}.id"))
+    title: Mapped[str] = mapped_column(String(180))
+    slug: Mapped[str] = mapped_column(String(120), index=True)
+    summary: Mapped[str] = mapped_column(String(255), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[WikiPageStatus] = mapped_column(Enum(WikiPageStatus), default=WikiPageStatus.draft, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"))
+    updated_by_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True)
+
+    space: Mapped[KnowledgeSpace] = relationship(back_populates="pages")
 
 
 class ProjectUpload(Base, TimestampMixin):

@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, BackgroundTasks
@@ -13,6 +14,7 @@ from app.schemas import ProjectRead, ProjectReviewRequest
 router = APIRouter(prefix="/projects", tags=["projects"])
 UPLOAD_DIR = Path("storage/uploads")
 ALLOWED_ARCHIVES = {".zip"}
+logger = logging.getLogger("gatestack.projects")
 
 
 def detect_stack(filename: str) -> str:
@@ -89,7 +91,7 @@ def simulate_deployment(project_id: str, db_session_factory):
 
         db.commit()
     except Exception:
-        pass
+        logger.exception("Project deployment simulation failed for project %s", project_id)
     finally:
         db.close()
 
@@ -118,4 +120,3 @@ def review_project(
         background_tasks.add_task(simulate_deployment, project.id, SessionLocal)
 
     return project
-

@@ -17,12 +17,18 @@ BASE_PERMISSIONS = {
     "projects:review": "Review uploaded project metadata",
     "projects:deploy": "Approve projects for deployment",
     "audit:view": "View security audit logs",
+    "knowledge:view": "View knowledge spaces and pages",
+    "knowledge:create": "Create knowledge spaces and wiki pages",
+    "knowledge:edit": "Edit existing wiki pages",
+    "knowledge:publish": "Publish or archive wiki pages",
+    "knowledge:admin": "Administer the knowledge base",
 }
 
 TEMPLATES = {
     "Platform Admin Template": list(BASE_PERMISSIONS.keys()),
     "App Manager Template": ["apps:view", "apps:manage", "projects:upload", "projects:review"],
-    "Viewer Template": ["apps:view"],
+    "Knowledge Editor Template": ["knowledge:view", "knowledge:create", "knowledge:edit", "knowledge:publish"],
+    "Viewer Template": ["apps:view", "knowledge:view"],
 }
 
 

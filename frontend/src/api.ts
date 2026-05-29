@@ -31,6 +31,7 @@ export interface User {
   permissions: string[];
   overrides: UserOverride[];
   status_reason?: string | null;
+  must_reset_password: boolean;
 }
 
 export interface Me extends User {
@@ -62,6 +63,29 @@ export interface ProjectUpload {
   created_at: string;
 }
 
+export type WikiPageStatus = "draft" | "published" | "archived";
+
+export interface KnowledgeSpace {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgePage {
+  id: string;
+  space_id: string;
+  title: string;
+  slug: string;
+  summary: string;
+  content: string;
+  status: WikiPageStatus;
+  created_at: string;
+  updated_at: string;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("gatestack_token");
   const headers = new Headers(options.headers);
@@ -83,7 +107,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   async login(email: string, password: string) {
-    return request<{ access_token: string }>("/auth/login", {
+    return request<{ access_token: string | null; must_reset_password: boolean; reset_token: string | null }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
@@ -99,6 +123,39 @@ export const api = {
   templates: () => request<Template[]>("/admin/templates"),
   apps: () => request<RegisteredApp[]>("/apps"),
   projects: () => request<ProjectUpload[]>("/projects"),
+  knowledgeSpaces: () => request<KnowledgeSpace[]>("/knowledge/spaces"),
+  knowledgePages: (spaceId?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (spaceId) params.set("space_id", spaceId);
+    if (query) params.set("q", query);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<KnowledgePage[]>(`/knowledge/pages${suffix}`);
+  },
+  createKnowledgeSpace: (name: string, slug: string, description: string) =>
+    request<KnowledgeSpace>("/knowledge/spaces", {
+      method: "POST",
+      body: JSON.stringify({ name, slug, description }),
+    }),
+  createKnowledgePage: (
+    spaceId: string,
+    title: string,
+    slug: string,
+    summary: string,
+    content: string,
+    status: WikiPageStatus,
+  ) =>
+    request<KnowledgePage>("/knowledge/pages", {
+      method: "POST",
+      body: JSON.stringify({ space_id: spaceId, title, slug, summary, content, status }),
+    }),
+  updateKnowledgePage: (
+    pageId: string,
+    payload: Partial<Pick<KnowledgePage, "title" | "slug" | "summary" | "content" | "status">>,
+  ) =>
+    request<KnowledgePage>(`/knowledge/pages/${pageId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   updateUserAccess: (userId: string, status: UserStatus, templateIds: string[], statusReason?: string | null) =>
     request<User>(`/admin/users/${userId}/approval`, {
       method: "PATCH",
@@ -117,6 +174,20 @@ export const api = {
   deleteUser: (userId: string) =>
     request<void>(`/admin/users/${userId}`, {
       method: "DELETE",
+    }),
+  createPasswordResetLink: (userId: string) =>
+    request<{ reset_token: string; reset_url: string }>(`/admin/users/${userId}/password-reset-link`, {
+      method: "POST",
+    }),
+  forcePasswordReset: (userId: string, force: boolean) =>
+    request<User>(`/admin/users/${userId}/force-password-reset`, {
+      method: "PATCH",
+      body: JSON.stringify({ force }),
+    }),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    request<void>("/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
     }),
   permissions: () => request<{ id: string; code: string; description: string }[]>("/admin/permissions"),
   async setPermissionOverride(userId: string, permissionId: string, effect: "allow" | "deny") {

@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import secrets
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -10,12 +13,15 @@ from app.models import (
     PermissionTemplate,
     TemplatePermission,
     User,
+    UserStatus,
     UserPermissionOverride,
     UserPermissionTemplate,
 )
 from app.schemas import (
     PermissionOverrideRequest,
     PermissionRead,
+    ForcePasswordResetRequest,
+    PasswordResetLinkResponse,
     TemplateRead,
     UserApprovalRequest,
     UserRead,
@@ -26,6 +32,27 @@ from app.schemas import (
 from app.services.permissions import get_effective_permissions
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def approved_platform_admin_count(db: Session) -> int:
+    return len(
+        db.scalars(
+            select(User).where(User.is_platform_admin == True, User.status == UserStatus.approved)  # noqa: E712
+        ).all()
+    )
+
+
+def ensure_admin_account_can_be_restricted(db: Session, actor: User, target: User) -> None:
+    if actor.id == target.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot restrict or delete your own active admin session.",
+        )
+    if target.is_platform_admin and approved_platform_admin_count(db) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one approved platform admin must remain active.",
+        )
 
 
 @router.get("/users", response_model=list[UserRead])
@@ -44,6 +71,9 @@ def update_user_approval(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.status != UserStatus.approved:
+        ensure_admin_account_can_be_restricted(db, actor, user)
 
     user.status = payload.status
     user.status_reason = payload.status_reason
@@ -125,6 +155,7 @@ def delete_user(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    ensure_admin_account_can_be_restricted(db, actor, user)
 
     db.execute(delete(UserPermissionOverride).where(UserPermissionOverride.user_id == user.id))
     db.execute(delete(UserPermissionTemplate).where(UserPermissionTemplate.user_id == user.id))
@@ -132,6 +163,56 @@ def delete_user(
     db.delete(user)
     db.add(AuditLog(actor_user_id=actor.id, action="users.deleted", target_type="user", target_id=user_id))
     db.commit()
+
+
+def ensure_password_reset_token(user: User) -> str:
+    if not user.password_reset_token:
+        user.password_reset_token = secrets.token_urlsafe(32)
+    user.password_reset_expires_at = datetime.utcnow() + timedelta(hours=24)
+    user.must_reset_password = True
+    return user.password_reset_token
+
+
+@router.post("/users/{user_id}/password-reset-link", response_model=PasswordResetLinkResponse)
+def create_password_reset_link(
+    user_id: str,
+    request: Request,
+    actor: User = Depends(require_permission("users:approve")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    token = ensure_password_reset_token(user)
+    db.add(AuditLog(actor_user_id=actor.id, action="users.password_reset_link_created", target_type="user", target_id=user.id))
+    db.commit()
+    frontend_origin = request.headers.get("origin") or "http://localhost:5173"
+    return PasswordResetLinkResponse(reset_token=token, reset_url=f"{frontend_origin}/?reset_token={token}")
+
+
+@router.patch("/users/{user_id}/force-password-reset", response_model=UserRead)
+def force_password_reset(
+    user_id: str,
+    payload: ForcePasswordResetRequest,
+    actor: User = Depends(require_permission("users:approve")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.force:
+        ensure_password_reset_token(user)
+    else:
+        user.must_reset_password = False
+        user.password_reset_token = None
+        user.password_reset_expires_at = None
+
+    db.add(AuditLog(actor_user_id=actor.id, action="users.force_password_reset_updated", target_type="user", target_id=user.id))
+    db.commit()
+    db.refresh(user)
+    return serialize_admin_user(db, user)
 
 
 
@@ -187,7 +268,7 @@ def delete_permission_override(
 
 
 @router.get("/permissions", response_model=list[PermissionRead])
-def list_permissions(_: User = Depends(require_permission("templates:view")), db: Session = Depends(get_db)):
+def list_permissions(_: User = Depends(require_permission("users:permissions")), db: Session = Depends(get_db)):
     return db.scalars(select(Permission).order_by(Permission.code)).all()
 
 
@@ -244,5 +325,5 @@ def serialize_admin_user(db: Session, user: User) -> UserRead:
         permissions=get_effective_permissions(db, user),
         overrides=overrides_list,
         status_reason=user.status_reason,
+        must_reset_password=user.must_reset_password,
     )
-

@@ -7,6 +7,8 @@ venv/
 # Node
 node_modules/
 dist/
+*.tsbuildinfo
+*.log
 
 # Local env and storage
 .env
