@@ -81,13 +81,21 @@ export function App() {
     if (tokenFromUrl) {
       setResetToken(tokenFromUrl);
     }
-    const token = localStorage.getItem("gatestack_token");
+    let token = localStorage.getItem("gatestack_token");
+    if (!token) {
+      const match = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/);
+      if (match) {
+        token = match[1];
+        localStorage.setItem("gatestack_token", token);
+      }
+    }
     if (token) {
       api.me()
         .then(setMe)
         .catch((err) => {
           checkMaintenance(err);
           localStorage.removeItem("gatestack_token");
+          document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
         });
     }
   }, []);
@@ -194,6 +202,7 @@ export function App() {
         }
         if (token.access_token) {
           localStorage.setItem("gatestack_token", token.access_token);
+          document.cookie = `gatestack_token=${token.access_token}; path=/; max-age=1209600; SameSite=Lax`;
           setMe(await api.me());
         }
       }
@@ -207,6 +216,7 @@ export function App() {
 
   function logout() {
     localStorage.removeItem("gatestack_token");
+    document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
     setMe(null);
     navigate("dashboard");
   }
@@ -311,9 +321,9 @@ export function App() {
         {can.has("projects:review") && (
           <NavButton icon={<UploadCloud />} active={view === "projects"} onClick={() => navigate("projects")} label="Proyectos" />
         )}
-        {can.has("knowledge:view") && (
-          <NavButton icon={<BookOpenText />} active={view === "knowledge"} onClick={() => navigate("knowledge")} label="Wiki" />
-        )}
+        {/* {can.has("knowledge:view") && (
+          // <NavButton icon={<BookOpenText />} active={view === "knowledge"} onClick={() => navigate("knowledge")} label="Wiki" />
+        )} */}
         {can.has("templates:view") && (
           <NavButton icon={<ShieldCheck />} active={view === "security"} onClick={() => navigate("security")} label="Seguridad" />
         )}

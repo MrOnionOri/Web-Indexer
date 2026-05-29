@@ -22,6 +22,11 @@ BASE_PERMISSIONS = {
     "knowledge:edit": "Edit existing wiki pages",
     "knowledge:publish": "Publish or archive wiki pages",
     "knowledge:admin": "Administer the knowledge base",
+    "confluence:view": "View Confluence spaces and pages",
+    "confluence:create": "Create Confluence spaces and pages",
+    "confluence:edit": "Edit Confluence pages",
+    "confluence:delete": "Delete Confluence pages",
+    "confluence:admin": "Administer the Confluence application",
 }
 
 TEMPLATES = {
@@ -29,6 +34,8 @@ TEMPLATES = {
     "App Manager Template": ["apps:view", "apps:manage", "projects:upload", "projects:review"],
     "Knowledge Editor Template": ["knowledge:view", "knowledge:create", "knowledge:edit", "knowledge:publish"],
     "Viewer Template": ["apps:view", "knowledge:view"],
+    "Confluence Admin Template": ["confluence:view", "confluence:create", "confluence:edit", "confluence:delete", "confluence:admin"],
+    "Confluence User Template": ["confluence:view", "confluence:create", "confluence:edit"],
 }
 
 

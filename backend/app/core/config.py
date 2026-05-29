@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     db_password: str = ""
     db_name: str = "gatestack"
     db_table_prefix: str = "gatestack_"
-    backend_cors_origins: list[AnyHttpUrl] | list[str] = ["http://localhost:5173"]
+    backend_cors_origins: list[AnyHttpUrl] | list[str] = ["http://localhost:5173", "http://localhost:8001"]
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
 
