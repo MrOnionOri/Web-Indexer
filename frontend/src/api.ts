@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://192.168.1.150:8000";
 
 export type UserStatus = "pending" | "approved" | "rejected" | "suspended";
 export type ProjectStatus =

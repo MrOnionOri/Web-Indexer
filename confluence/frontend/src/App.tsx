@@ -14,7 +14,7 @@ import AdminPanel from "./components/AdminPanel";
 import SpaceSettings from "./components/SpaceSettings";
 
 // API endpoints
-const GATESTACK_AUTH_URL = "http://localhost:8000";
+const GATESTACK_AUTH_URL = "http://192.168.1.150:8000";
 
 interface UserProfile {
   id: string;
@@ -44,8 +44,29 @@ interface Page {
   created_by_id: string;
   is_restricted: boolean;
   allowed_emails: string;
+  comments_allowed: boolean;
   created_at: string;
   updated_at: string;
+}
+
+interface CommentReaction {
+  id: string;
+  comment_id: string;
+  user_id: string;
+  user_name: string;
+  emoji: string;
+}
+
+interface Comment {
+  id: string;
+  page_id: string;
+  parent_id?: string;
+  author_email: string;
+  author_name: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+  reactions: CommentReaction[];
 }
 
 export default function App() {
@@ -122,6 +143,8 @@ export default function App() {
   const [editPageContent, setEditPageContent] = useState("");
   const [editPageIsRestricted, setEditPageIsRestricted] = useState(false);
   const [editPageAllowedEmails, setEditPageAllowedEmails] = useState("");
+  const [editPageCommentsAllowed, setEditPageCommentsAllowed] = useState(true);
+  const [comments, setComments] = useState<Comment[]>([]);
 
   // Admin states
   const [seedSuccessMsg, setSeedSuccessMsg] = useState("");
@@ -130,9 +153,12 @@ export default function App() {
   // Permissions helper
   const perms = useMemo(() => new Set(currentUser?.permissions || []), [currentUser]);
   const hasView = perms.has("gatewiki:view") || !!currentUser?.is_platform_admin;
-  const hasCreate = perms.has("gatewiki:create") || !!currentUser?.is_platform_admin;
-  const hasEdit = perms.has("gatewiki:edit") || !!currentUser?.is_platform_admin;
-  const hasDelete = perms.has("gatewiki:delete") || !!currentUser?.is_platform_admin;
+  const hasCreateSpace = perms.has("gatewiki:create_workspace") || perms.has("gatewiki:create") || !!currentUser?.is_platform_admin;
+  const hasCreatePage = perms.has("gatewiki:create_page") || perms.has("gatewiki:create") || !!currentUser?.is_platform_admin;
+  const hasEditSpace = perms.has("gatewiki:edit_workspace") || perms.has("gatewiki:edit") || !!currentUser?.is_platform_admin;
+  const hasEditPage = perms.has("gatewiki:edit_page") || perms.has("gatewiki:edit") || !!currentUser?.is_platform_admin;
+  const hasDeleteSpace = perms.has("gatewiki:delete_workspace") || perms.has("gatewiki:delete") || !!currentUser?.is_platform_admin;
+  const hasDeletePage = perms.has("gatewiki:delete_page") || perms.has("gatewiki:delete") || !!currentUser?.is_platform_admin;
   const hasAdmin = perms.has("gatewiki:admin") || !!currentUser?.is_platform_admin;
 
 
@@ -256,6 +282,7 @@ export default function App() {
       setEditPageContent("");
       setEditPageIsRestricted(false);
       setEditPageAllowedEmails("");
+      setEditPageCommentsAllowed(true);
     } else if (path.startsWith("/edit/")) {
       const id = path.substring(6);
       setCurrentView("edit");
@@ -278,6 +305,7 @@ export default function App() {
       }
       const pageData = await response.json();
       setActivePage(pageData);
+      fetchComments(id);
     } catch (error: any) {
       alert(error.message);
       navigate("/dashboard");
@@ -299,9 +327,79 @@ export default function App() {
       setEditPageContent(pageData.content);
       setEditPageIsRestricted(pageData.is_restricted);
       setEditPageAllowedEmails(pageData.allowed_emails);
+      setEditPageCommentsAllowed(pageData.comments_allowed ?? true);
     } catch (error: any) {
       alert(error.message);
       navigate("/dashboard");
+    }
+  };
+
+  const fetchComments = async (pageId: string) => {
+    try {
+      const response = await fetch(`/api/pages/${pageId}/comments`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const commentsData = await response.json();
+        setComments(commentsData);
+      }
+    } catch (err) {
+      console.error("Error al cargar comentarios:", err);
+    }
+  };
+
+  const handleAddComment = async (content: string, parentId?: string) => {
+    if (!activePage) return;
+    const response = await fetch(`/api/pages/${activePage.id}/comments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ content, parent_id: parentId || null })
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || "Error al añadir comentario.");
+    }
+    await fetchComments(activePage.id);
+  };
+
+  const handleToggleReaction = async (commentId: string, emoji: string) => {
+    try {
+      const response = await fetch(`/api/comments/${commentId}/react`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ emoji })
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        alert(err.detail || "Error al procesar reacción.");
+        return;
+      }
+      if (activePage) {
+        await fetchComments(activePage.id);
+      }
+    } catch (err) {
+      console.error("Error al reaccionar al comentario:", err);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    const response = await fetch(`/api/comments/${commentId}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      alert(err.detail || "Error al eliminar comentario.");
+      return;
+    }
+    if (activePage) {
+      await fetchComments(activePage.id);
     }
   };
 
@@ -464,7 +562,8 @@ export default function App() {
       title: editPageTitle,
       content: editPageContent,
       is_restricted: editPageIsRestricted,
-      allowed_emails: editPageIsRestricted ? editPageAllowedEmails : ""
+      allowed_emails: editPageIsRestricted ? editPageAllowedEmails : "",
+      comments_allowed: editPageCommentsAllowed
     };
 
     try {
@@ -697,7 +796,7 @@ export default function App() {
         spaces={spaces}
         activeSpaceFilter={activeSpaceFilter}
         onSelectSpace={(key) => navigate(key ? `/space/${key}` : "/dashboard")}
-        hasCreate={hasCreate}
+        hasCreate={hasCreateSpace}
         onAddSpaceClick={() => setSpaceModalOpen(true)}
         onLogout={handleLogout}
         currentView={currentView}
@@ -708,7 +807,7 @@ export default function App() {
           currentUser={currentUser}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
-          hasCreate={hasCreate}
+          hasCreate={hasCreatePage}
           hasAdmin={hasAdmin}
           onCreatePageClick={() => navigate("/edit")}
           onAdminPanelClick={() => navigate("/admin")}
@@ -726,7 +825,7 @@ export default function App() {
               activeSpaceFilter={activeSpaceFilter}
               onReadPage={(id) => navigate(`/page/${id}`)}
               onDeletePage={handleDeletePage}
-              hasDelete={hasDelete}
+              hasDelete={hasDeletePage}
               onEditSpace={triggerEditSpace}
             />
           )}
@@ -735,11 +834,15 @@ export default function App() {
             <PageRead
               currentUser={currentUser}
               activePage={activePage}
+              comments={comments}
+              onAddComment={handleAddComment}
+              onDeleteComment={handleDeleteComment}
+              onToggleReaction={handleToggleReaction}
               onBackClick={() => navigate("/dashboard")}
               onEditClick={() => navigate(`/edit/${activePage.id}`)}
               onDeleteClick={handleDeletePage}
-              hasEdit={hasEdit}
-              hasDelete={hasDelete}
+              hasEdit={hasEditPage}
+              hasDelete={hasDeletePage}
               renderMarkdown={renderMarkdown}
             />
           )}
@@ -757,6 +860,8 @@ export default function App() {
               setEditPageIsRestricted={setEditPageIsRestricted}
               editPageAllowedEmails={editPageAllowedEmails}
               setEditPageAllowedEmails={setEditPageAllowedEmails}
+              editPageCommentsAllowed={editPageCommentsAllowed}
+              setEditPageCommentsAllowed={setEditPageCommentsAllowed}
               spaces={spaces}
               allUsers={allUsers}
               onSubmit={handleCreateOrUpdatePage}

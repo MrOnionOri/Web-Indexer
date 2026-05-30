@@ -93,6 +93,12 @@ export default function SpaceSettings({
     );
   }, [allUsers, editSpaceAllowedEmails, searchText]);
 
+  const perms = useMemo(() => new Set(currentUser.permissions || []), [currentUser]);
+  const hasDeleteSpace = currentUser.is_platform_admin || 
+                         perms.has("gatewiki:delete_workspace") || 
+                         perms.has("gatewiki:delete") || 
+                         activeSpace.created_by_id === currentUser.id;
+
   return (
     <div className="subview">
       <button className="btn-back" onClick={onCancel}>
@@ -335,31 +341,32 @@ export default function SpaceSettings({
         </div>
       </div>
 
-      {/* Danger Zone: Destructive Actions */}
-      <div className="danger-zone-card">
-        <div className="card-header" style={{ display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgba(239, 68, 68, 0.15)", paddingBottom: "12px" }}>
-          <ShieldAlert size={20} style={{ color: "#ef4444" }} />
-          <h2 style={{ color: "#ef4444", margin: 0 }}>Zona de Peligro (Danger Zone)</h2>
-        </div>
-        <div style={{ padding: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
-          <div style={{ flex: "1 1 500px" }}>
-            <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", color: "#f87171" }}>Eliminar este espacio de trabajo</h3>
-            <p className="text-small" style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "13px" }}>
-              Al eliminar este espacio se borrarán de manera **permanente** todas las páginas y la documentación asociada en la base de datos de MySQL. Esta acción no se puede deshacer.
-            </p>
+      {hasDeleteSpace && (
+        <div className="danger-zone-card">
+          <div className="card-header" style={{ display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgba(239, 68, 68, 0.15)", paddingBottom: "12px" }}>
+            <ShieldAlert size={20} style={{ color: "#ef4444" }} />
+            <h2 style={{ color: "#ef4444", margin: 0 }}>Zona de Peligro (Danger Zone)</h2>
           </div>
-          <div>
-            <button
-              type="button"
-              className="btn-danger"
-              style={{ padding: "10px 20px", background: "#ef4444", fontWeight: "bold" }}
-              onClick={() => onDeleteSpace(activeSpace.id)}
-            >
-              Eliminar Espacio
-            </button>
+          <div style={{ padding: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+            <div style={{ flex: "1 1 500px" }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", color: "#f87171" }}>Eliminar este espacio de trabajo</h3>
+              <p className="text-small" style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "13px" }}>
+                Al eliminar este espacio se borrarán de manera **permanente** todas las páginas y la documentación asociada en la base de datos de MySQL. Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div>
+              <button
+                type="button"
+                className="btn-danger"
+                style={{ padding: "10px 20px", background: "#ef4444", fontWeight: "bold" }}
+                onClick={() => onDeleteSpace(activeSpace.id)}
+              >
+                Eliminar Espacio
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

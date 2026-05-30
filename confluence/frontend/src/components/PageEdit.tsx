@@ -28,6 +28,8 @@ interface PageEditProps {
   setEditPageIsRestricted: (val: boolean) => void;
   editPageAllowedEmails: string;
   setEditPageAllowedEmails: (val: string) => void;
+  editPageCommentsAllowed: boolean;
+  setEditPageCommentsAllowed: (val: boolean) => void;
   spaces: Space[];
   allUsers: UserListItem[];
   onSubmit: (e: FormEvent) => void;
@@ -47,6 +49,8 @@ export default function PageEdit({
   setEditPageIsRestricted,
   editPageAllowedEmails,
   setEditPageAllowedEmails,
+  editPageCommentsAllowed,
+  setEditPageCommentsAllowed,
   spaces,
   allUsers,
   onSubmit,
@@ -274,6 +278,19 @@ export default function PageEdit({
               </div>
             </div>
           )}
+
+          <div className="restriction-toggle-container" style={{ marginTop: "16px", borderTop: "1px solid var(--border-color)", paddingTop: "16px" }}>
+            <div className="toggle-control">
+              <input
+                type="checkbox"
+                id="allow-comments-checkbox"
+                checked={editPageCommentsAllowed}
+                onChange={(e) => setEditPageCommentsAllowed(e.target.checked)}
+              />
+              <label htmlFor="allow-comments-checkbox"><strong>Permitir comentarios en esta página</strong></label>
+            </div>
+            <p className="text-small text-muted">Si se activa, todos los usuarios con acceso a esta página podrán ver y escribir comentarios.</p>
+          </div>
         </div>
 
         <div className="form-actions">

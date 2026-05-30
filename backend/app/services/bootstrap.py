@@ -22,11 +22,17 @@ BASE_PERMISSIONS = {
     "knowledge:edit": "Edit existing wiki pages",
     "knowledge:publish": "Publish or archive wiki pages",
     "knowledge:admin": "Administer the knowledge base",
-    "confluence:view": "View Confluence spaces and pages",
-    "confluence:create": "Create Confluence spaces and pages",
-    "confluence:edit": "Edit Confluence pages",
-    "confluence:delete": "Delete Confluence pages",
-    "confluence:admin": "Administer the Confluence application",
+    "gatewiki:view": "View GateWiki spaces and pages",
+    "gatewiki:create": "Create GateWiki spaces and pages (legacy)",
+    "gatewiki:edit": "Edit GateWiki pages (legacy)",
+    "gatewiki:delete": "Delete GateWiki pages (legacy)",
+    "gatewiki:admin": "Administer the GateWiki application",
+    "gatewiki:create_workspace": "Create GateWiki spaces/workspaces",
+    "gatewiki:create_page": "Create pages inside GateWiki spaces",
+    "gatewiki:edit_workspace": "Edit GateWiki workspace configurations",
+    "gatewiki:edit_page": "Edit pages inside GateWiki spaces",
+    "gatewiki:delete_workspace": "Delete GateWiki spaces/workspaces",
+    "gatewiki:delete_page": "Delete pages inside GateWiki spaces",
 }
 
 TEMPLATES = {
@@ -34,13 +40,52 @@ TEMPLATES = {
     "App Manager Template": ["apps:view", "apps:manage", "projects:upload", "projects:review"],
     "Knowledge Editor Template": ["knowledge:view", "knowledge:create", "knowledge:edit", "knowledge:publish"],
     "Viewer Template": ["apps:view", "knowledge:view"],
-    "Confluence Admin Template": ["confluence:view", "confluence:create", "confluence:edit", "confluence:delete", "confluence:admin"],
-    "Confluence User Template": ["confluence:view", "confluence:create", "confluence:edit"],
+    "GateWiki Admin Template": [
+        "gatewiki:view",
+        "gatewiki:create_workspace",
+        "gatewiki:create_page",
+        "gatewiki:edit_workspace",
+        "gatewiki:edit_page",
+        "gatewiki:delete_workspace",
+        "gatewiki:delete_page",
+        "gatewiki:admin"
+    ],
+    "GateWiki User Template": [
+        "gatewiki:view",
+        "gatewiki:create_page",
+        "gatewiki:edit_page"
+    ],
 }
 
 
 def bootstrap(db: Session) -> None:
     settings = get_settings()
+
+    # Clean up legacy confluence permissions and templates
+    try:
+        from app.models import PermissionTemplate, Permission, TemplatePermission, UserPermissionTemplate, UserPermissionOverride
+        
+        # 1. Obsolete permissions
+        obsolete_perms = db.scalars(select(Permission).where(Permission.code.like("confluence:%"))).all()
+        if obsolete_perms:
+            obsolete_perm_ids = [p.id for p in obsolete_perms]
+            db.query(TemplatePermission).filter(TemplatePermission.permission_id.in_(obsolete_perm_ids)).delete(synchronize_session=False)
+            db.query(UserPermissionOverride).filter(UserPermissionOverride.permission_id.in_(obsolete_perm_ids)).delete(synchronize_session=False)
+            db.query(Permission).filter(Permission.id.in_(obsolete_perm_ids)).delete(synchronize_session=False)
+            
+        # 2. Obsolete templates
+        obsolete_templates = db.scalars(select(PermissionTemplate).where(PermissionTemplate.name.like("Confluence %"))).all()
+        if obsolete_templates:
+            obsolete_template_ids = [t.id for t in obsolete_templates]
+            db.query(TemplatePermission).filter(TemplatePermission.template_id.in_(obsolete_template_ids)).delete(synchronize_session=False)
+            db.query(UserPermissionTemplate).filter(UserPermissionTemplate.template_id.in_(obsolete_template_ids)).delete(synchronize_session=False)
+            db.query(PermissionTemplate).filter(PermissionTemplate.id.in_(obsolete_template_ids)).delete(synchronize_session=False)
+            
+        db.flush()
+        print("Obsolete confluence permissions and templates successfully cleaned up.")
+    except Exception as e:
+        print("Obsolete confluence cleanup skipped or failed:", e)
+
     permission_by_code: dict[str, Permission] = {}
 
     for code, description in BASE_PERMISSIONS.items():

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, text
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, text, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ----------------- CONFIGURACIÓN & DB (MySQL) -----------------
@@ -32,7 +32,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # URL de GateStack
-GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://localhost:8000")
+GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000")
 
 # ----------------- MODELOS DE BASE DE DATOS -----------------
 class SpaceModel(Base):
@@ -60,13 +60,36 @@ class PageModel(Base):
     created_by_id = Column(String(36), nullable=False)
     is_restricted = Column(Boolean, default=False)
     allowed_emails = Column(Text, default="")  # Almacenado como correos separados por comas
+    comments_allowed = Column(Boolean, default=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CommentModel(Base):
+    __tablename__ = "confluence_comments"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    page_id = Column(String(36), ForeignKey("confluence_pages.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id = Column(String(36), ForeignKey("confluence_comments.id", ondelete="CASCADE"), nullable=True)
+    author_email = Column(String(255), nullable=False)
+    author_name = Column(String(160), nullable=False)
+    author_id = Column(String(36), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CommentReactionModel(Base):
+    __tablename__ = "confluence_comment_reactions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    comment_id = Column(String(36), ForeignKey("confluence_comments.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), nullable=False)
+    user_name = Column(String(160), nullable=False)
+    emoji = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Crear tablas si no existen
 Base.metadata.create_all(bind=engine)
 
-# Asegurar migración de columnas en confluence_spaces (auto-healing)
+# Asegurar migración de columnas en confluence_spaces y confluence_pages (auto-healing)
 try:
     with engine.connect() as conn:
         result = conn.execute(text("SHOW COLUMNS FROM confluence_spaces"))
@@ -82,6 +105,19 @@ try:
             conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN is_restricted BOOLEAN DEFAULT FALSE NULL"))
         if "allowed_emails" not in existing_cols:
             conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN allowed_emails TEXT NULL"))
+            
+        # Pages migración
+        p_result = conn.execute(text("SHOW COLUMNS FROM confluence_pages"))
+        existing_p_cols = {row[0] for row in p_result.fetchall()}
+        if "comments_allowed" not in existing_p_cols:
+            conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN comments_allowed BOOLEAN DEFAULT TRUE NULL"))
+            
+        # Comments migración
+        c_result = conn.execute(text("SHOW COLUMNS FROM confluence_comments"))
+        existing_c_cols = {row[0] for row in c_result.fetchall()}
+        if "parent_id" not in existing_c_cols:
+            conn.execute(text("ALTER TABLE confluence_comments ADD COLUMN parent_id VARCHAR(36) NULL"))
+            
         conn.commit()
 except Exception as e:
     print("Nota: Error durante la migración de columnas:", e)
@@ -116,6 +152,7 @@ class PageCreate(BaseModel):
     content: str
     is_restricted: bool = False
     allowed_emails: str = ""
+    comments_allowed: bool = True
 
 class PageRead(BaseModel):
     id: str
@@ -127,8 +164,37 @@ class PageRead(BaseModel):
     created_by_id: str
     is_restricted: bool
     allowed_emails: str
+    comments_allowed: bool
     created_at: datetime
     updated_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class CommentReactionRead(BaseModel):
+    id: str
+    comment_id: str
+    user_id: str
+    user_name: str
+    emoji: str
+    class Config:
+        from_attributes = True
+
+
+class CommentCreate(BaseModel):
+    content: str
+    parent_id: Optional[str] = None
+
+class CommentRead(BaseModel):
+    id: str
+    page_id: str
+    parent_id: Optional[str] = None
+    author_email: str
+    author_name: str
+    author_id: str
+    content: str
+    created_at: datetime
+    reactions: List[CommentReactionRead] = []
     class Config:
         from_attributes = True
 
@@ -149,9 +215,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
     # Intentamos contactar al backend central de GateStack usando varias URLs alternativas
     urls = [
         GATESTACK_API_URL,
-        "http://host.docker.internal:8000",
-        "http://gatestack-backend:8000",
-        "http://localhost:8000"
+        # "http://host.docker.internal:8000",
+        # "http://gatestack-backend:8000",
+        "http://192.168.1.150:8000"
     ]
     
     for base_url in urls:
@@ -174,7 +240,23 @@ def check_permission(user: dict, required_permission: str):
     if is_admin:
         return
         
-    if required_permission not in permissions:
+    allowed = False
+    if required_permission in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:create_workspace" and "gatewiki:create" in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:create_page" and "gatewiki:create" in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:edit_workspace" and "gatewiki:edit" in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:edit_page" and "gatewiki:edit" in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:delete_workspace" and "gatewiki:delete" in permissions:
+        allowed = True
+    elif required_permission == "gatewiki:delete_page" and "gatewiki:delete" in permissions:
+        allowed = True
+
+    if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"No tienes el permiso requerido: {required_permission}"
@@ -228,7 +310,7 @@ def get_spaces(db: Session = Depends(get_db), user: dict = Depends(get_current_u
 
 @app.post("/api/spaces", response_model=SpaceRead)
 def create_space(space: SpaceCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:create")
+    check_permission(user, "gatewiki:create_workspace")
     
     existing = db.query(SpaceModel).filter((SpaceModel.key == space.key.upper()) | (SpaceModel.name == space.name)).first()
     if existing:
@@ -251,7 +333,7 @@ def create_space(space: SpaceCreate, db: Session = Depends(get_db), user: dict =
 
 @app.put("/api/spaces/{space_id}", response_model=SpaceRead)
 def update_space(space_id: str, payload: SpaceCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:edit")
+    check_permission(user, "gatewiki:edit_workspace")
     
     space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
     if not space:
@@ -283,7 +365,7 @@ def update_space(space_id: str, payload: SpaceCreate, db: Session = Depends(get_
 
 @app.delete("/api/spaces/{space_id}", status_code=204)
 def delete_space(space_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:delete")
+    check_permission(user, "gatewiki:delete_workspace")
     
     space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
     if not space:
@@ -375,7 +457,7 @@ def get_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(g
 
 @app.post("/api/pages", response_model=PageRead)
 def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:create")
+    check_permission(user, "gatewiki:create_page")
     
     space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
     if not space:
@@ -399,7 +481,8 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
         created_by_name=user.get("full_name"),
         created_by_id=user.get("id"),
         is_restricted=page.is_restricted,
-        allowed_emails=page.allowed_emails
+        allowed_emails=page.allowed_emails,
+        comments_allowed=page.comments_allowed
     )
     db.add(db_page)
     db.commit()
@@ -408,7 +491,7 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
 
 @app.put("/api/pages/{page_id}", response_model=PageRead)
 def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:edit")
+    check_permission(user, "gatewiki:edit_page")
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
@@ -437,13 +520,14 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
                 
     # Verificar si es el dueño, admin o tiene permisos de edición
     if not (is_admin or page.created_by_id == user.get("id")):
-        check_permission(user, "gatewiki:edit")
+        check_permission(user, "gatewiki:edit_page")
         
     page.title = payload.title
     page.content = payload.content
     page.is_restricted = payload.is_restricted
     page.allowed_emails = payload.allowed_emails
     page.space_key = payload.space_key.upper()
+    page.comments_allowed = payload.comments_allowed
     
     db.commit()
     db.refresh(page)
@@ -451,7 +535,7 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
 
 @app.delete("/api/pages/{page_id}", status_code=204)
 def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    check_permission(user, "gatewiki:delete")
+    check_permission(user, "gatewiki:delete_page")
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
@@ -470,9 +554,153 @@ def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depend
             
     # Solo el dueño o admins pueden borrar, o cualquier gatewiki:delete
     if not (is_admin or page.created_by_id == user.get("id")):
-        check_permission(user, "gatewiki:delete")
+        check_permission(user, "gatewiki:delete_page")
         
+    db.query(CommentModel).filter(CommentModel.page_id == page_id).delete()
     db.delete(page)
+    db.commit()
+    return
+
+
+# --- Comentarios ---
+@app.get("/api/pages/{page_id}/comments", response_model=List[CommentRead])
+def get_comments(page_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+    
+    page = db.query(PageModel).filter(PageModel.id == page_id).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        
+    # Verificar acceso al espacio y a la página restringida
+    space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
+    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
+    user_email = user.get("email", "").lower()
+    user_id = user.get("id", "")
+    
+    if space and space.is_restricted:
+        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
+        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
+            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta página.")
+            
+    if page.is_restricted:
+        allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
+        if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
+            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta página privada.")
+            
+    comments = db.query(CommentModel).filter(CommentModel.page_id == page_id).order_by(CommentModel.created_at.asc()).all()
+    for c in comments:
+        c.reactions = db.query(CommentReactionModel).filter(CommentReactionModel.comment_id == c.id).all()
+    return comments
+
+
+@app.post("/api/pages/{page_id}/comments", response_model=CommentRead)
+def create_comment(page_id: str, payload: CommentCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+    
+    page = db.query(PageModel).filter(PageModel.id == page_id).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        
+    if not page.comments_allowed:
+        raise HTTPException(status_code=400, detail="Los comentarios están desactivados para esta página.")
+        
+    # Verificar acceso al espacio y a la página restringida
+    space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
+    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
+    user_email = user.get("email", "").lower()
+    user_id = user.get("id", "")
+    
+    if space and space.is_restricted:
+        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
+        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
+            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta página.")
+            
+    if page.is_restricted:
+        allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
+        if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
+            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta página privada.")
+            
+    # Validar parent_id
+    if payload.parent_id:
+        parent = db.query(CommentModel).filter(CommentModel.id == payload.parent_id).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Comentario principal no encontrado.")
+        if parent.page_id != page_id:
+            raise HTTPException(status_code=400, detail="El comentario principal no pertenece a esta página.")
+        if parent.parent_id:
+            raise HTTPException(status_code=400, detail="No se permiten hilos de discusión de más de 1 nivel.")
+            
+    db_comment = CommentModel(
+        page_id=page_id,
+        parent_id=payload.parent_id,
+        author_email=user.get("email"),
+        author_name=user.get("full_name"),
+        author_id=user.get("id"),
+        content=payload.content
+    )
+    db.add(db_comment)
+    db.commit()
+    db.refresh(db_comment)
+    db_comment.reactions = []
+    return db_comment
+
+
+class ReactionPayload(BaseModel):
+    emoji: str
+
+@app.post("/api/comments/{comment_id}/react")
+def toggle_reaction(comment_id: str, payload: ReactionPayload, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+    
+    comment = db.query(CommentModel).filter(CommentModel.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comentario no encontrado.")
+        
+    user_id = user.get("id")
+    user_name = user.get("full_name")
+    emoji = payload.emoji.strip()
+    
+    # Comprobar si ya existe
+    existing = db.query(CommentReactionModel).filter(
+        CommentReactionModel.comment_id == comment_id,
+        CommentReactionModel.user_id == user_id,
+        CommentReactionModel.emoji == emoji
+    ).first()
+    
+    if existing:
+        db.delete(existing)
+        db.commit()
+    else:
+        new_reaction = CommentReactionModel(
+            comment_id=comment_id,
+            user_id=user_id,
+            user_name=user_name,
+            emoji=emoji
+        )
+        db.add(new_reaction)
+        db.commit()
+        
+    updated = db.query(CommentReactionModel).filter(CommentReactionModel.comment_id == comment_id).all()
+    return updated
+
+
+@app.delete("/api/comments/{comment_id}", status_code=204)
+def delete_comment(comment_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    comment = db.query(CommentModel).filter(CommentModel.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comentario no encontrado.")
+        
+    page = db.query(PageModel).filter(PageModel.id == comment.page_id).first()
+    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
+    
+    if not (is_admin or comment.author_id == user.get("id") or (page and page.created_by_id == user.get("id"))):
+        raise HTTPException(status_code=403, detail="No tienes permisos para eliminar este comentario.")
+        
+    # Borrar respuestas anidadas si es un comentario padre
+    if not comment.parent_id:
+        db.query(CommentModel).filter(CommentModel.parent_id == comment_id).delete()
+        
+    db.delete(comment)
     db.commit()
     return
 
