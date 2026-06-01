@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useMemo, FormEvent } from "react";
 import { X } from "lucide-react";
-import hljs from "highlight.js";
-import "highlight.js/styles/vs2015.css";
 
 // Import modular components
 import Login from "./components/Login";
@@ -12,62 +10,8 @@ import PageRead from "./components/PageRead";
 import PageEdit from "./components/PageEdit";
 import AdminPanel from "./components/AdminPanel";
 import SpaceSettings from "./components/SpaceSettings";
-
-// API endpoints
-const GATESTACK_AUTH_URL = "http://192.168.1.150:8000";
-
-interface UserProfile {
-  id: string;
-  email: string;
-  full_name: string;
-  permissions: string[];
-  is_platform_admin: boolean;
-}
-
-interface Space {
-  id: string;
-  name: string;
-  key: string;
-  description: string;
-  is_restricted?: boolean;
-  allowed_emails?: string;
-  created_at: string;
-}
-
-interface Page {
-  id: string;
-  space_key: string;
-  title: string;
-  content: string;
-  created_by_email: string;
-  created_by_name: string;
-  created_by_id: string;
-  is_restricted: boolean;
-  allowed_emails: string;
-  comments_allowed: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CommentReaction {
-  id: string;
-  comment_id: string;
-  user_id: string;
-  user_name: string;
-  emoji: string;
-}
-
-interface Comment {
-  id: string;
-  page_id: string;
-  parent_id?: string;
-  author_email: string;
-  author_name: string;
-  author_id: string;
-  content: string;
-  created_at: string;
-  reactions: CommentReaction[];
-}
+import MarkdownContent from "./components/MarkdownContent";
+import { api, Comment, Page, Space, UserListItem, UserProfile } from "./api";
 
 export default function App() {
   // Auth states
@@ -88,11 +32,6 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-
-  interface UserListItem {
-    email: string;
-    full_name: string;
-  }
 
   // Business states
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -141,6 +80,7 @@ export default function App() {
   const [editPageTitle, setEditPageTitle] = useState("");
   const [editPageSpace, setEditPageSpace] = useState("");
   const [editPageContent, setEditPageContent] = useState("");
+  const [editPageSubtopics, setEditPageSubtopics] = useState("");
   const [editPageIsRestricted, setEditPageIsRestricted] = useState(false);
   const [editPageAllowedEmails, setEditPageAllowedEmails] = useState("");
   const [editPageCommentsAllowed, setEditPageCommentsAllowed] = useState(true);
@@ -196,15 +136,7 @@ export default function App() {
 
   const validateTokenAndInit = async (jwtToken: string) => {
     try {
-      const response = await fetch(`${GATESTACK_AUTH_URL}/auth/me`, {
-        headers: { "Authorization": `Bearer ${jwtToken}` }
-      });
-
-      if (!response.ok) {
-        throw new Error("Token expirado o inválido.");
-      }
-
-      const profile: UserProfile = await response.json();
+      const profile = await api.me(jwtToken);
       const hasViewPermission = profile.permissions.includes("gatewiki:view") || profile.is_platform_admin;
 
       if (!hasViewPermission) {
@@ -225,23 +157,14 @@ export default function App() {
 
   const refreshData = async () => {
     try {
-      const headers = { "Authorization": `Bearer ${token}` };
-      const [spacesRes, pagesRes, usersRes] = await Promise.all([
-        fetch("/api/spaces", { headers }),
-        fetch("/api/pages", { headers }),
-        fetch("/api/users", { headers })
+      const [spacesData, pagesData, usersData] = await Promise.all([
+        api.spaces(token),
+        api.pages(token),
+        api.users(token)
       ]);
-
-      if (spacesRes.ok && pagesRes.ok) {
-        const spacesData = await spacesRes.json();
-        const pagesData = await pagesRes.json();
-        setSpaces(spacesData);
-        setPages(pagesData);
-      }
-      if (usersRes && usersRes.ok) {
-        const usersData = await usersRes.json();
-        setAllUsers(usersData);
-      }
+      setSpaces(spacesData);
+      setPages(pagesData);
+      setAllUsers(usersData);
     } catch (error) {
       console.error("Error al refrescar datos:", error);
     }
@@ -280,6 +203,7 @@ export default function App() {
       setEditPageTitle("");
       setEditPageSpace(activeSpaceFilter || "");
       setEditPageContent("");
+      setEditPageSubtopics("");
       setEditPageIsRestricted(false);
       setEditPageAllowedEmails("");
       setEditPageCommentsAllowed(true);
@@ -297,13 +221,7 @@ export default function App() {
 
   const fetchAndSetActivePage = async (id: string) => {
     try {
-      const response = await fetch(`/api/pages/${id}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        throw new Error("No tienes acceso o la página no existe.");
-      }
-      const pageData = await response.json();
+      const pageData = await api.page(token, id);
       setActivePage(pageData);
       fetchComments(id);
     } catch (error: any) {
@@ -314,17 +232,12 @@ export default function App() {
 
   const fetchAndSetEditPage = async (id: string) => {
     try {
-      const response = await fetch(`/api/pages/${id}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        throw new Error("No tienes acceso o la página no existe.");
-      }
-      const pageData = await response.json();
+      const pageData = await api.page(token, id);
       setEditPageId(pageData.id);
       setEditPageTitle(pageData.title);
       setEditPageSpace(pageData.space_key);
       setEditPageContent(pageData.content);
+      setEditPageSubtopics(pageData.subtopics || "");
       setEditPageIsRestricted(pageData.is_restricted);
       setEditPageAllowedEmails(pageData.allowed_emails);
       setEditPageCommentsAllowed(pageData.comments_allowed ?? true);
@@ -336,13 +249,7 @@ export default function App() {
 
   const fetchComments = async (pageId: string) => {
     try {
-      const response = await fetch(`/api/pages/${pageId}/comments`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const commentsData = await response.json();
-        setComments(commentsData);
-      }
+      setComments(await api.comments(token, pageId));
     } catch (err) {
       console.error("Error al cargar comentarios:", err);
     }
@@ -350,56 +257,29 @@ export default function App() {
 
   const handleAddComment = async (content: string, parentId?: string) => {
     if (!activePage) return;
-    const response = await fetch(`/api/pages/${activePage.id}/comments`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ content, parent_id: parentId || null })
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al añadir comentario.");
-    }
+    await api.addComment(token, activePage.id, content, parentId);
     await fetchComments(activePage.id);
   };
 
   const handleToggleReaction = async (commentId: string, emoji: string) => {
     try {
-      const response = await fetch(`/api/comments/${commentId}/react`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ emoji })
-      });
-      if (!response.ok) {
-        const err = await response.json();
-        alert(err.detail || "Error al procesar reacción.");
-        return;
-      }
+      await api.toggleReaction(token, commentId, emoji);
       if (activePage) {
         await fetchComments(activePage.id);
       }
-    } catch (err) {
-      console.error("Error al reaccionar al comentario:", err);
+    } catch (err: any) {
+      alert(err.message || "Error al procesar reacción.");
     }
   };
 
   const handleDeleteComment = async (commentId: string) => {
-    const response = await fetch(`/api/comments/${commentId}`, {
-      method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      alert(err.detail || "Error al eliminar comentario.");
-      return;
-    }
-    if (activePage) {
-      await fetchComments(activePage.id);
+    try {
+      await api.deleteComment(token, commentId);
+      if (activePage) {
+        await fetchComments(activePage.id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Error al eliminar comentario.");
     }
   };
 
@@ -426,20 +306,12 @@ export default function App() {
     setLoginError(null);
 
     try {
-      const response = await fetch(`${GATESTACK_AUTH_URL}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || "Credenciales incorrectas o usuario no aprobado.");
-      }
-
-      const data = await response.json();
+      const data = await api.login(loginEmail, loginPassword);
       if (data.must_reset_password) {
         throw new Error("Debes restablecer tu contraseña en el panel de GateStack primero.");
+      }
+      if (!data.access_token) {
+        throw new Error("GateStack no devolvió un token de acceso.");
       }
 
       localStorage.setItem("gatewiki_token", data.access_token);
@@ -466,25 +338,13 @@ export default function App() {
   const handleCreateSpace = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("/api/spaces", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: newSpaceName,
-          key: newSpaceKey.toUpperCase().trim(),
-          description: newSpaceDesc,
-          is_restricted: newSpaceIsRestricted,
-          allowed_emails: newSpaceIsRestricted ? newSpaceAllowedEmails : ""
-        })
+      await api.createSpace(token, {
+        name: newSpaceName,
+        key: newSpaceKey.toUpperCase().trim(),
+        description: newSpaceDesc,
+        is_restricted: newSpaceIsRestricted,
+        allowed_emails: newSpaceIsRestricted ? newSpaceAllowedEmails : ""
       });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Error al crear el espacio.");
-      }
 
       setSpaceModalOpen(false);
       setNewSpaceName("");
@@ -506,25 +366,13 @@ export default function App() {
     e.preventDefault();
     if (!editSpaceId) return;
     try {
-      const response = await fetch(`/api/spaces/${editSpaceId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: editSpaceName,
-          key: editSpaceKey.toUpperCase().trim(),
-          description: editSpaceDesc,
-          is_restricted: editSpaceIsRestricted,
-          allowed_emails: editSpaceIsRestricted ? editSpaceAllowedEmails : ""
-        })
+      await api.updateSpace(token, editSpaceId, {
+        name: editSpaceName,
+        key: editSpaceKey.toUpperCase().trim(),
+        description: editSpaceDesc,
+        is_restricted: editSpaceIsRestricted,
+        allowed_emails: editSpaceIsRestricted ? editSpaceAllowedEmails : ""
       });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Error al actualizar el espacio.");
-      }
 
       setEditSpaceId(null);
       await refreshData();
@@ -537,16 +385,7 @@ export default function App() {
   const handleDeleteSpace = async (id: string) => {
     if (!confirm("¿Deseas eliminar este espacio y TODAS sus páginas permanentemente?")) return;
     try {
-      const response = await fetch(`/api/spaces/${id}`, {
-        method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Error al eliminar el espacio.");
-      }
-
+      await api.deleteSpace(token, id);
       await refreshData();
       navigate("/dashboard");
     } catch (error: any) {
@@ -561,29 +400,14 @@ export default function App() {
       space_key: editPageSpace,
       title: editPageTitle,
       content: editPageContent,
+      subtopics: editPageSubtopics,
       is_restricted: editPageIsRestricted,
       allowed_emails: editPageIsRestricted ? editPageAllowedEmails : "",
       comments_allowed: editPageCommentsAllowed
     };
 
     try {
-      const url = editPageId ? `/api/pages/${editPageId}` : "/api/pages";
-      const method = editPageId ? "PUT" : "POST";
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Error al guardar la página.");
-      }
-
-      const savedPage: Page = await response.json();
+      const savedPage = await api.savePage(token, editPageId, payload);
       await refreshData();
       navigate(`/page/${savedPage.id}`);
     } catch (error: any) {
@@ -595,15 +419,7 @@ export default function App() {
     if (!confirm("¿Deseas eliminar esta página de forma permanente?")) return;
 
     try {
-      const response = await fetch(`/api/pages/${id}`, {
-        method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-
-      if (!response.ok) {
-        throw new Error("No tienes permisos para eliminar esta página.");
-      }
-
+      await api.deletePage(token, id);
       await refreshData();
       if (activePage?.id === id) {
         setActivePage(null);
@@ -618,15 +434,9 @@ export default function App() {
     setSeedLoading(true);
     setSeedSuccessMsg("");
     try {
-      const response = await fetch("/api/seed", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const res = await response.json();
-        setSeedSuccessMsg(res.message || "Datos semilla inicializados.");
-        await refreshData();
-      }
+      const res = await api.seed(token);
+      setSeedSuccessMsg(res.message || "Datos semilla inicializados.");
+      await refreshData();
     } catch (error) {
       alert("Error cargando semillas.");
     } finally {
@@ -674,68 +484,7 @@ export default function App() {
 
   // Markdown renderer helper
   const renderMarkdown = (md: string) => {
-    if (!md) return "";
-    let html = md
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-    html = html.replace(/^# (.*?)$/gm, "<h1>$1</h1>");
-    html = html.replace(/^## (.*?)$/gm, "<h2>$1</h2>");
-    html = html.replace(/^### (.*?)$/gm, "<h3>$1</h3>");
-    html = html.replace(/&gt; \[!CAUTION\]\n(?:&gt;[ \t]*)?(.*?)$/gm, '<div class="alert-box info-alert" style="border-color:var(--color-danger); background:var(--color-danger-glow); color:#f87171;"><i data-lucide="alert-triangle"></i><div>$1</div></div>');
-    html = html.replace(/&gt; \[!NOTE\]\n(?:&gt;[ \t]*)?(.*?)$/gm, '<div class="alert-box info-alert"><i data-lucide="info"></i><div>$1</div></div>');
-    html = html.replace(/```([\s\S]*?)```|`([^`]+)`/g, (match, p1, p2) => {
-      if (p1 !== undefined) {
-        // Splitting into language and code
-        const firstLineEnd = p1.indexOf('\n');
-        let lang = "";
-        let code = p1;
-        if (firstLineEnd !== -1) {
-          const firstLine = p1.substring(0, firstLineEnd).trim();
-          if (/^[a-zA-Z0-9_+-]+$/.test(firstLine) && firstLine.length < 15) {
-            lang = firstLine;
-            code = p1.substring(firstLineEnd + 1);
-          }
-        }
-
-        // Unescape the already-escaped HTML characters for highlight.js
-        const unescapedCode = code
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
-
-        // Highlight code
-        let highlightedCode = code;
-        try {
-          if (lang && hljs.getLanguage(lang)) {
-            highlightedCode = hljs.highlight(unescapedCode, { language: lang }).value;
-          } else {
-            highlightedCode = hljs.highlightAuto(unescapedCode).value;
-          }
-        } catch (e) {
-          // Fallback to escaping if highlighting fails
-          highlightedCode = code;
-        }
-
-        const displayLang = lang ? lang.toUpperCase() : "CODE";
-
-        return `<div class="code-block-wrapper">
-          <div class="code-block-header">
-            <span class="code-block-lang">${displayLang}</span>
-          </div>
-          <pre><code class="hljs ${lang}">${highlightedCode}</code></pre>
-        </div>`;
-      }
-      return `<code>${p2}</code>`;
-    });
-    html = html.replace(/^\* (.*?)$/gm, "<li>$1</li>");
-    html = html.replace(/((?:<li>.*?<\/li>\s*)+)/gs, "<ul>$1</ul>");
-    html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
-    html = html.replace(/\n\n/g, "</p><p>");
-
-    return <div dangerouslySetInnerHTML={{ __html: html }} />;
+    return <MarkdownContent content={md || ""} />;
   };
 
   // Helper editor toolbar
@@ -794,8 +543,10 @@ export default function App() {
       <Sidebar
         currentUser={currentUser}
         spaces={spaces}
+        pages={pages}
         activeSpaceFilter={activeSpaceFilter}
         onSelectSpace={(key) => navigate(key ? `/space/${key}` : "/dashboard")}
+        onReadPage={(id) => navigate(`/page/${id}`)}
         hasCreate={hasCreateSpace}
         onAddSpaceClick={() => setSpaceModalOpen(true)}
         onLogout={handleLogout}
@@ -824,6 +575,7 @@ export default function App() {
               filteredPages={filteredPages}
               activeSpaceFilter={activeSpaceFilter}
               onReadPage={(id) => navigate(`/page/${id}`)}
+              onOpenSpace={(key) => navigate(`/space/${key}`)}
               onDeletePage={handleDeletePage}
               hasDelete={hasDeletePage}
               onEditSpace={triggerEditSpace}
@@ -856,6 +608,8 @@ export default function App() {
               setEditPageSpace={setEditPageSpace}
               editPageContent={editPageContent}
               setEditPageContent={setEditPageContent}
+              editPageSubtopics={editPageSubtopics}
+              setEditPageSubtopics={setEditPageSubtopics}
               editPageIsRestricted={editPageIsRestricted}
               setEditPageIsRestricted={setEditPageIsRestricted}
               editPageAllowedEmails={editPageAllowedEmails}

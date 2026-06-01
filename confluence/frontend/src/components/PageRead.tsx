@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ArrowLeft, Lock, Globe, Edit3, Trash2, MessageSquare, Send } from "lucide-react";
+import { parseSubtopics } from "../subtopics";
 
 interface UserProfile {
   id: string;
@@ -34,6 +35,7 @@ interface Page {
   space_key: string;
   title: string;
   content: string;
+  subtopics?: string;
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;
@@ -101,6 +103,7 @@ export default function PageRead({
   };
 
   const isOwner = activePage.created_by_id === currentUser.id;
+  const pageSubtopics = parseSubtopics(activePage.subtopics);
 
   // Filtrar comentarios padres y mapear hijos
   const parentComments = comments.filter(c => !c.parent_id);
@@ -208,6 +211,29 @@ export default function PageRead({
         <div className="page-content">
           {renderMarkdown(activePage.content)}
         </div>
+
+        {pageSubtopics.length > 0 && (
+          <section className="page-subtopics-section">
+            <div className="comments-section-header">
+              <MessageSquare size={16} />
+              <h2>Subtemas</h2>
+            </div>
+            <div className="page-subtopics-list">
+              {pageSubtopics.map((subtopic, index) => (
+                <article key={index} className="page-subtopic-card">
+                  <h3>{subtopic.title || `Subtema ${index + 1}`}</h3>
+                  {subtopic.content ? (
+                    <div className="page-content page-subtopic-content">
+                      {renderMarkdown(subtopic.content)}
+                    </div>
+                  ) : (
+                    <p className="text-muted">Sin información adicional.</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         {activePage.is_restricted && (
           <div className="alert-box info-alert" style={{ marginBottom: "24px" }}>

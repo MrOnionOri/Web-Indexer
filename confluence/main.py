@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import List, Optional
 import requests
 
+# LEGACY: esta variante usa SQLite y se conserva solo como referencia local.
+# La app activa para Docker/producción vive en backend/main.py.
+
 from fastapi import FastAPI, Depends, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -21,7 +24,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # Variables de entorno
-GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://localhost:8000")
+GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://localhost:8000").rstrip("/")
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
+)
 
 # ----------------- MODELOS DE BASE DE DATOS -----------------
 class SpaceModel(Base):
@@ -136,12 +148,13 @@ def check_permission(user: dict, required_permission: str):
         )
 
 # ----------------- APP FASTAPI -----------------
-app = FastAPI(title="GateWiki Service")
+app = FastAPI(title="GateWiki Service (Legacy SQLite)")
 
 # Habilitar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -326,8 +339,8 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
         },
         {
             "space_key": "ENG",
-            "title": "[PRIVADO] Credenciales de Despliegue de Producción",
-            "content": "# CREDENCIALES CRÍTICAS\n\n> [!CAUTION]\n> Esta información es altamente restringida.\n\n* **Host base de datos:** `prod-mysql.internal`\n* **Clave de cifrado simétrico:** `df789asudf9a8sdhfg234`\n* **SSH Keys:** Guardadas en el llavero seguro.",
+            "title": "[PRIVADO] Ejemplo de Procedimiento de Despliegue",
+            "content": "# Procedimiento Privado de Despliegue\n\n> [!CAUTION]\n> Esta página es solo un ejemplo de contenido restringido para pruebas.\n\n* **Entorno:** `staging`\n* **Responsable:** Equipo de plataforma\n* **Notas:** No guardes credenciales reales dentro de GateWiki.",
             "is_restricted": True,
             "allowed_emails": "admin@gatestack.dev"
         }

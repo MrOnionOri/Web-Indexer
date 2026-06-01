@@ -201,12 +201,13 @@ export function UsersView({
           const protectedAction = isProtectedAdminAction(user);
           
           const inheritedPermissions = new Set<string>();
-          user.template_ids.forEach((tId) => {
-            const template = templates.find((t) => t.id === tId);
+          const activeTemplateId = selectedTemplate;
+          if (activeTemplateId) {
+            const template = templates.find((t) => t.id === activeTemplateId);
             if (template) {
               template.permissions.forEach((p) => inheritedPermissions.add(p));
             }
-          });
+          }
 
           return (
             <div key={user.id} className="user-block">
@@ -295,6 +296,9 @@ export function UsersView({
                       const override = user.overrides?.find((o) => o.permission_id === perm.id);
                       const currentEffect = override ? override.effect : "default";
 
+                      const isAllowed = currentEffect === "allow" || (currentEffect === "default" && isDefaultGranted);
+                      const isDenied = currentEffect === "deny" || (currentEffect === "default" && !isDefaultGranted);
+
                       const handleOverride = async (effect: "allow" | "deny" | "default") => {
                         try {
                           if (effect === "default") {
@@ -316,30 +320,51 @@ export function UsersView({
                             <small>Estado plantilla: {isDefaultGranted ? "Permitido (Heredado)" : "Denegado (Heredado)"}</small>
                           </div>
                           <div className="override-choices">
-                            <label className={`choice-label ${currentEffect === "default" ? "active" : ""}`}>
+                            <label 
+                              className={`choice-label ${currentEffect === "default" ? "active" : ""}`}
+                              onClick={() => {
+                                if (currentEffect !== "default") {
+                                  handleOverride("default");
+                                }
+                              }}
+                            >
                               <input
                                 type="radio"
                                 name={`override-${user.id}-${perm.id}`}
                                 checked={currentEffect === "default"}
-                                onChange={() => handleOverride("default")}
+                                readOnly
                               />
                               Heredar
                             </label>
-                            <label className={`choice-label allow ${currentEffect === "allow" ? "active" : ""}`}>
+                            <label 
+                              className={`choice-label allow ${isAllowed ? "active" : ""}`}
+                              onClick={() => {
+                                if (currentEffect !== "allow") {
+                                  handleOverride("allow");
+                                }
+                              }}
+                            >
                               <input
                                 type="radio"
                                 name={`override-${user.id}-${perm.id}`}
-                                checked={currentEffect === "allow"}
-                                onChange={() => handleOverride("allow")}
+                                checked={isAllowed}
+                                readOnly
                               />
                               Permitir
                             </label>
-                            <label className={`choice-label deny ${currentEffect === "deny" ? "active" : ""}`}>
+                            <label 
+                              className={`choice-label deny ${isDenied ? "active" : ""}`}
+                              onClick={() => {
+                                if (currentEffect !== "deny") {
+                                  handleOverride("deny");
+                                }
+                              }}
+                            >
                               <input
                                 type="radio"
                                 name={`override-${user.id}-${perm.id}`}
-                                checked={currentEffect === "deny"}
-                                onChange={() => handleOverride("deny")}
+                                checked={isDenied}
+                                readOnly
                               />
                               Denegar
                             </label>

@@ -1,5 +1,7 @@
-import React, { FormEvent, useState, useMemo } from "react";
+import React, { FormEvent, useEffect, useState, useMemo } from "react";
 import { Save } from "lucide-react";
+import MarkdownContent from "./MarkdownContent";
+import { parseSubtopics, serializeSubtopics, SubtopicItem } from "../subtopics";
 
 interface Space {
   id: string;
@@ -24,6 +26,8 @@ interface PageEditProps {
   setEditPageSpace: (val: string) => void;
   editPageContent: string;
   setEditPageContent: (val: string) => void;
+  editPageSubtopics: string;
+  setEditPageSubtopics: (val: string) => void;
   editPageIsRestricted: boolean;
   setEditPageIsRestricted: (val: boolean) => void;
   editPageAllowedEmails: string;
@@ -45,6 +49,8 @@ export default function PageEdit({
   setEditPageSpace,
   editPageContent,
   setEditPageContent,
+  editPageSubtopics,
+  setEditPageSubtopics,
   editPageIsRestricted,
   setEditPageIsRestricted,
   editPageAllowedEmails,
@@ -59,6 +65,24 @@ export default function PageEdit({
 }: PageEditProps) {
   const [searchText, setSearchText] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [contentMode, setContentMode] = useState<"split" | "visual" | "markdown">("split");
+  const [pendingToolbarTag, setPendingToolbarTag] = useState<string | null>(null);
+  const subtopicItems = useMemo(() => parseSubtopics(editPageSubtopics), [editPageSubtopics]);
+
+  useEffect(() => {
+    if (!pendingToolbarTag || contentMode === "visual") return;
+    insertMdTag(pendingToolbarTag);
+    setPendingToolbarTag(null);
+  }, [contentMode, pendingToolbarTag, insertMdTag]);
+
+  const handleToolbarInsert = (tag: string) => {
+    if (contentMode === "visual") {
+      setPendingToolbarTag(tag);
+      setContentMode("split");
+      return;
+    }
+    insertMdTag(tag);
+  };
 
   const handleAddEmail = (email: string) => {
     const emails = editPageAllowedEmails.split(",").map(em => em.trim()).filter(Boolean);
@@ -68,6 +92,25 @@ export default function PageEdit({
     }
     setSearchText("");
     setIsDropdownOpen(false);
+  };
+
+  const setSubtopicItems = (items: SubtopicItem[]) => {
+    setEditPageSubtopics(serializeSubtopics(items));
+  };
+
+  const updateSubtopic = (index: number, patch: Partial<SubtopicItem>) => {
+    const nextItems = subtopicItems.map((item, currentIndex) =>
+      currentIndex === index ? { ...item, ...patch } : item
+    );
+    setSubtopicItems(nextItems);
+  };
+
+  const addSubtopic = () => {
+    setSubtopicItems([...subtopicItems, { title: "", content: "" }]);
+  };
+
+  const removeSubtopic = (index: number) => {
+    setSubtopicItems(subtopicItems.filter((_, currentIndex) => currentIndex !== index));
   };
 
   const filteredUsers = useMemo(() => {
@@ -116,21 +159,79 @@ export default function PageEdit({
         </div>
 
         <div className="form-group">
-          <label>Contenido (Markdown)</label>
+          <div className="subtopics-header">
+            <label>Subtemas con información</label>
+            <button type="button" className="btn-secondary" onClick={addSubtopic}>Agregar subtema</button>
+          </div>
+          <div className="subtopics-editor-list">
+            {subtopicItems.length === 0 ? (
+              <div className="subtopics-empty">
+                Crea subtemas para que aparezcan en el hub y tengan contenido propio.
+              </div>
+            ) : (
+              subtopicItems.map((subtopic, index) => (
+                <div key={index} className="subtopic-editor-card">
+                  <div className="subtopic-editor-row">
+                    <input
+                      type="text"
+                      placeholder="Título del subtema"
+                      value={subtopic.title}
+                      onChange={(e) => updateSubtopic(index, { title: e.target.value })}
+                    />
+                    <button type="button" className="btn-secondary" onClick={() => removeSubtopic(index)}>Quitar</button>
+                  </div>
+                  <textarea
+                    rows={4}
+                    placeholder="Información del subtema. Puedes usar Markdown."
+                    value={subtopic.content}
+                    onChange={(e) => updateSubtopic(index, { content: e.target.value })}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+          <span className="input-helper">Estos subtemas son independientes del contenido principal. El hub no leerá mensajes ni encabezados automáticamente.</span>
+        </div>
+
+        <div className="form-group">
+          <label>Contenido</label>
           <div className="editor-container">
             <div className="editor-toolbar">
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("h1")}>H1</button>
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("h2")}>H2</button>
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("bold")}>B</button>
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("italic")}>I</button>
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("code")}>Code</button>
-              <button type="button" className="toolbar-btn" onClick={() => insertMdTag("list")}>List</button>
+              <div className="editor-mode-toggle" role="tablist" aria-label="Modo de edición">
+                <button
+                  type="button"
+                  className={`editor-mode-btn ${contentMode === "split" ? "active" : ""}`}
+                  onClick={() => setContentMode("split")}
+                >
+                  Visual + Markdown
+                </button>
+                <button
+                  type="button"
+                  className={`editor-mode-btn ${contentMode === "visual" ? "active" : ""}`}
+                  onClick={() => setContentMode("visual")}
+                >
+                  Visual
+                </button>
+                <button
+                  type="button"
+                  className={`editor-mode-btn ${contentMode === "markdown" ? "active" : ""}`}
+                  onClick={() => setContentMode("markdown")}
+                >
+                  Markdown
+                </button>
+              </div>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("h1")}>H1</button>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("h2")}>H2</button>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("bold")}>B</button>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("italic")}>I</button>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("code")}>Code</button>
+              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("list")}>List</button>
               <select
                 className="toolbar-select"
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val) {
-                    insertMdTag(`code-block:${val}`);
+                    handleToolbarInsert(`code-block:${val}`);
                     e.target.value = "";
                   }
                 }}
@@ -149,14 +250,63 @@ export default function PageEdit({
                 <option value="go">Go</option>
               </select>
             </div>
-            <textarea
-              id="edit-page-content-input"
-              rows={15}
-              placeholder="Escribe aquí en formato Markdown..."
-              value={editPageContent}
-              onChange={(e) => setEditPageContent(e.target.value)}
-              required
-            />
+            <div className="editor-body">
+              {contentMode === "split" && (
+                <div className="editor-split">
+                  <div className="editor-pane editor-source-pane">
+                    <div className="editor-pane-header">Markdown</div>
+                    <textarea
+                      id="edit-page-content-input"
+                      rows={15}
+                      placeholder="Escribe aquí en formato Markdown..."
+                      value={editPageContent}
+                      onChange={(e) => setEditPageContent(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="editor-pane editor-preview-pane">
+                    <div className="editor-pane-header">Visual</div>
+                    <div className="page-content editor-visual-content">
+                      {editPageContent.trim() ? (
+                        <MarkdownContent content={editPageContent} />
+                      ) : (
+                        <div className="editor-empty-state">
+                          <h3>Empieza tu página</h3>
+                          <p>Escribe en Markdown y verás el resultado aquí en tiempo real.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {contentMode === "visual" && (
+                <div className="page-content editor-visual-content">
+                  {editPageContent.trim() ? (
+                    <MarkdownContent content={editPageContent} />
+                  ) : (
+                    <div className="editor-empty-state">
+                      <h3>Empieza tu página</h3>
+                      <p>Cambia a Markdown o Visual + Markdown para escribir el contenido.</p>
+                      <button type="button" className="btn-secondary" onClick={() => setContentMode("split")}>
+                        Escribir contenido
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {contentMode === "markdown" && (
+                <textarea
+                  id="edit-page-content-input"
+                  rows={15}
+                  placeholder="Escribe aquí en formato Markdown..."
+                  value={editPageContent}
+                  onChange={(e) => setEditPageContent(e.target.value)}
+                  required
+                />
+              )}
+            </div>
           </div>
         </div>
 

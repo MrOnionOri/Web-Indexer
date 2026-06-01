@@ -16,6 +16,7 @@ backend/.env
 backend/storage/
 frontend/gatestack-preview.png
 
+
 # OS/editor
 .DS_Store
 Thumbs.db

@@ -16,6 +16,7 @@ interface Page {
   space_key: string;
   title: string;
   content: string;
+  subtopics?: string;
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;

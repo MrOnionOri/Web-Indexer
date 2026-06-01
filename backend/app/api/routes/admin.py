@@ -1,7 +1,9 @@
 import secrets
+import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -228,16 +230,19 @@ def set_permission_override(
     if not db.get(Permission, payload.permission_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Permission not found")
 
-    override = db.scalar(
-        select(UserPermissionOverride).where(
-            UserPermissionOverride.user_id == user_id,
-            UserPermissionOverride.permission_id == payload.permission_id,
-        )
+    statement = mysql_insert(UserPermissionOverride).values(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        permission_id=payload.permission_id,
+        effect=payload.effect,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
     )
-    if override:
-        override.effect = payload.effect
-    else:
-        db.add(UserPermissionOverride(user_id=user_id, permission_id=payload.permission_id, effect=payload.effect))
+    statement = statement.on_duplicate_key_update(
+        effect=payload.effect,
+        updated_at=datetime.utcnow(),
+    )
+    db.execute(statement)
 
     db.add(AuditLog(actor_user_id=actor.id, action="users.permission_override_set", target_type="user", target_id=user_id))
     db.commit()
@@ -259,10 +264,8 @@ def delete_permission_override(
             UserPermissionOverride.permission_id == permission_id,
         )
     )
-    if not override:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
-
-    db.delete(override)
+    if override:
+        db.delete(override)
     db.add(AuditLog(actor_user_id=actor.id, action="users.permission_override_deleted", target_type="user", target_id=user_id))
     db.commit()
 

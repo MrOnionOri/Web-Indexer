@@ -5,7 +5,7 @@ from typing import List, Optional
 import requests
 from urllib.parse import quote_plus
 
-from fastapi import FastAPI, Depends, HTTPException, Security, status
+from fastapi import FastAPI, Depends, HTTPException, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "Lmao123@@123//")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 
 # URL-escape para caracteres especiales en la contraseña (ej: @, /)
@@ -31,8 +31,23 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# URL de GateStack
-GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000")
+# URL de GateStack. En pruebas con varios dispositivos fija:
+# GATESTACK_API_URL=http://TU_IPV4:8000
+GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000").rstrip("/")
+GATESTACK_FALLBACK_URLS = [
+    url.strip().rstrip("/")
+    for url in os.getenv("GATESTACK_FALLBACK_URLS", "").split(",")
+    if url.strip()
+]
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
+)
 
 # ----------------- MODELOS DE BASE DE DATOS -----------------
 class SpaceModel(Base):
@@ -55,6 +70,7 @@ class PageModel(Base):
     space_key = Column(String(20), nullable=False, index=True)
     title = Column(String(180), nullable=False)
     content = Column(Text, default="")
+    subtopics = Column(Text, default="", nullable=True)
     created_by_email = Column(String(255), nullable=False)
     created_by_name = Column(String(160), nullable=False)
     created_by_id = Column(String(36), nullable=False)
@@ -86,41 +102,45 @@ class CommentReactionModel(Base):
     emoji = Column(String(10), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Crear tablas si no existen
-Base.metadata.create_all(bind=engine)
+def init_db_for_local_dev() -> None:
+    Base.metadata.create_all(bind=engine)
 
-# Asegurar migración de columnas en confluence_spaces y confluence_pages (auto-healing)
-try:
-    with engine.connect() as conn:
-        result = conn.execute(text("SHOW COLUMNS FROM confluence_spaces"))
-        existing_cols = {row[0] for row in result.fetchall()}
-        
-        if "created_by_email" not in existing_cols:
-            conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_email VARCHAR(255) NULL"))
-        if "created_by_name" not in existing_cols:
-            conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_name VARCHAR(160) NULL"))
-        if "created_by_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_id VARCHAR(36) NULL"))
-        if "is_restricted" not in existing_cols:
-            conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN is_restricted BOOLEAN DEFAULT FALSE NULL"))
-        if "allowed_emails" not in existing_cols:
-            conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN allowed_emails TEXT NULL"))
+    # Compatibilidad temporal para bases creadas antes de Alembic.
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SHOW COLUMNS FROM confluence_spaces"))
+            existing_cols = {row[0] for row in result.fetchall()}
             
-        # Pages migración
-        p_result = conn.execute(text("SHOW COLUMNS FROM confluence_pages"))
-        existing_p_cols = {row[0] for row in p_result.fetchall()}
-        if "comments_allowed" not in existing_p_cols:
-            conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN comments_allowed BOOLEAN DEFAULT TRUE NULL"))
-            
-        # Comments migración
-        c_result = conn.execute(text("SHOW COLUMNS FROM confluence_comments"))
-        existing_c_cols = {row[0] for row in c_result.fetchall()}
-        if "parent_id" not in existing_c_cols:
-            conn.execute(text("ALTER TABLE confluence_comments ADD COLUMN parent_id VARCHAR(36) NULL"))
-            
-        conn.commit()
-except Exception as e:
-    print("Nota: Error durante la migración de columnas:", e)
+            if "created_by_email" not in existing_cols:
+                conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_email VARCHAR(255) NULL"))
+            if "created_by_name" not in existing_cols:
+                conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_name VARCHAR(160) NULL"))
+            if "created_by_id" not in existing_cols:
+                conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN created_by_id VARCHAR(36) NULL"))
+            if "is_restricted" not in existing_cols:
+                conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN is_restricted BOOLEAN DEFAULT FALSE NULL"))
+            if "allowed_emails" not in existing_cols:
+                conn.execute(text("ALTER TABLE confluence_spaces ADD COLUMN allowed_emails TEXT NULL"))
+                
+            p_result = conn.execute(text("SHOW COLUMNS FROM confluence_pages"))
+            existing_p_cols = {row[0] for row in p_result.fetchall()}
+            if "comments_allowed" not in existing_p_cols:
+                conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN comments_allowed BOOLEAN DEFAULT TRUE NULL"))
+            if "subtopics" not in existing_p_cols:
+                conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN subtopics TEXT NULL"))
+                
+            c_result = conn.execute(text("SHOW COLUMNS FROM confluence_comments"))
+            existing_c_cols = {row[0] for row in c_result.fetchall()}
+            if "parent_id" not in existing_c_cols:
+                conn.execute(text("ALTER TABLE confluence_comments ADD COLUMN parent_id VARCHAR(36) NULL"))
+                
+            conn.commit()
+    except Exception as e:
+        print("Nota: Error durante la migración de columnas:", e)
+
+
+if os.getenv("GATEWIKI_SKIP_DB_INIT") != "1":
+    init_db_for_local_dev()
 
 
 # ----------------- SCHEMAS PYDANTIC -----------------
@@ -150,6 +170,7 @@ class PageCreate(BaseModel):
     space_key: str
     title: str
     content: str
+    subtopics: str = ""
     is_restricted: bool = False
     allowed_emails: str = ""
     comments_allowed: bool = True
@@ -159,6 +180,7 @@ class PageRead(BaseModel):
     space_key: str
     title: str
     content: str
+    subtopics: Optional[str] = ""
     created_by_email: str
     created_by_name: str
     created_by_id: str
@@ -185,6 +207,10 @@ class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[str] = None
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 class CommentRead(BaseModel):
     id: str
     page_id: str
@@ -208,17 +234,11 @@ def get_db():
     finally:
         db.close()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
+def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
     token = credentials.credentials
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Intentamos contactar al backend central de GateStack usando varias URLs alternativas
-    urls = [
-        GATESTACK_API_URL,
-        # "http://host.docker.internal:8000",
-        # "http://gatestack-backend:8000",
-        "http://192.168.1.150:8000"
-    ]
+    urls = get_gatestack_urls(request)
     
     for base_url in urls:
         try:
@@ -232,6 +252,48 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token inválido o el servicio central de GateStack IAM no está disponible."
     )
+
+def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
+    inferred_urls: List[str] = []
+    if request:
+        host = request.url.hostname
+        if host and host not in {"localhost", "127.0.0.1"}:
+            inferred_urls.append(f"{request.url.scheme}://{host}:8000")
+
+    fallback_urls = [
+        "http://host.docker.internal:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+
+    return list(dict.fromkeys([
+        GATESTACK_API_URL,
+        *inferred_urls,
+        *GATESTACK_FALLBACK_URLS,
+        *fallback_urls,
+    ]))
+
+def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, **kwargs):
+    last_error = "GateStack IAM no está disponible."
+    for base_url in get_gatestack_urls(request):
+        try:
+            response = requests.request(method, f"{base_url}{path}", timeout=4.0, **kwargs)
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {"detail": response.text or "Respuesta inválida de GateStack IAM."}
+
+            if response.status_code >= 400:
+                detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+                raise HTTPException(status_code=response.status_code, detail=detail)
+            return payload
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
 
 def check_permission(user: dict, required_permission: str):
     permissions = user.get("permissions", [])
@@ -262,19 +324,51 @@ def check_permission(user: dict, required_permission: str):
             detail=f"No tienes el permiso requerido: {required_permission}"
         )
 
+def is_admin_user(user: dict) -> bool:
+    return user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
+
+def allowed_email_list(value: Optional[str]) -> List[str]:
+    return [email.strip().lower() for email in (value or "").split(",") if email.strip()]
+
+def ensure_page_access(page: PageModel, db: Session, user: dict, action: str = "visualizar") -> SpaceModel | None:
+    space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
+    is_admin = is_admin_user(user)
+    user_email = user.get("email", "").lower()
+    user_id = user.get("id", "")
+
+    if space and space.is_restricted:
+        if not (is_admin or space.created_by_id == user_id or user_email in allowed_email_list(space.allowed_emails)):
+            raise HTTPException(status_code=403, detail=f"No tienes acceso para {action} contenido de este espacio de trabajo.")
+
+    if page.is_restricted:
+        if not (is_admin or page.created_by_id == user_id or user_email in allowed_email_list(page.allowed_emails)):
+            raise HTTPException(status_code=403, detail=f"No tienes acceso para {action} esta pÃ¡gina privada.")
+
+    return space
+
 # ----------------- APP FASTAPI -----------------
 app = FastAPI(title="GateWiki Service (MySQL)")
 
 # Habilitar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ----------------- RUTAS API -----------------
+
+# --- Auth proxy hacia GateStack IAM ---
+@app.post("/auth/login")
+def login(payload: LoginRequest, request: Request):
+    return forward_gatestack_request("POST", "/auth/login", request=request, json=payload.model_dump())
+
+@app.get("/auth/me")
+def auth_me(user: dict = Depends(get_current_user)):
+    return user
 
 # --- Usuarios ---
 @app.get("/api/users")
@@ -477,6 +571,7 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
         space_key=page.space_key.upper(),
         title=page.title,
         content=page.content,
+        subtopics=page.subtopics,
         created_by_email=user.get("email"),
         created_by_name=user.get("full_name"),
         created_by_id=user.get("id"),
@@ -524,6 +619,7 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
         
     page.title = payload.title
     page.content = payload.content
+    page.subtopics = payload.subtopics
     page.is_restricted = payload.is_restricted
     page.allowed_emails = payload.allowed_emails
     page.space_key = payload.space_key.upper()
@@ -570,22 +666,8 @@ def get_comments(page_id: str, db: Session = Depends(get_db), user: dict = Depen
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
         raise HTTPException(status_code=404, detail="Página no encontrada.")
-        
-    # Verificar acceso al espacio y a la página restringida
-    space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
-    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
-    user_email = user.get("email", "").lower()
-    user_id = user.get("id", "")
-    
-    if space and space.is_restricted:
-        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta página.")
-            
-    if page.is_restricted:
-        allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta página privada.")
+
+    ensure_page_access(page, db, user)
             
     comments = db.query(CommentModel).filter(CommentModel.page_id == page_id).order_by(CommentModel.created_at.asc()).all()
     for c in comments:
@@ -603,22 +685,8 @@ def create_comment(page_id: str, payload: CommentCreate, db: Session = Depends(g
         
     if not page.comments_allowed:
         raise HTTPException(status_code=400, detail="Los comentarios están desactivados para esta página.")
-        
-    # Verificar acceso al espacio y a la página restringida
-    space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
-    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
-    user_email = user.get("email", "").lower()
-    user_id = user.get("id", "")
-    
-    if space and space.is_restricted:
-        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta página.")
-            
-    if page.is_restricted:
-        allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta página privada.")
+
+    ensure_page_access(page, db, user, "comentar")
             
     # Validar parent_id
     if payload.parent_id:
@@ -655,10 +723,17 @@ def toggle_reaction(comment_id: str, payload: ReactionPayload, db: Session = Dep
     comment = db.query(CommentModel).filter(CommentModel.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comentario no encontrado.")
+
+    page = db.query(PageModel).filter(PageModel.id == comment.page_id).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Página no encontrada.")
+    ensure_page_access(page, db, user, "reaccionar a")
         
     user_id = user.get("id")
     user_name = user.get("full_name")
     emoji = payload.emoji.strip()
+    if not emoji or len(emoji) > 10:
+        raise HTTPException(status_code=400, detail="Reacción inválida.")
     
     # Comprobar si ya existe
     existing = db.query(CommentReactionModel).filter(
@@ -686,14 +761,20 @@ def toggle_reaction(comment_id: str, payload: ReactionPayload, db: Session = Dep
 
 @app.delete("/api/comments/{comment_id}", status_code=204)
 def delete_comment(comment_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+
     comment = db.query(CommentModel).filter(CommentModel.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comentario no encontrado.")
         
     page = db.query(PageModel).filter(PageModel.id == comment.page_id).first()
-    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
+    if not page:
+        raise HTTPException(status_code=404, detail="Página no encontrada.")
+
+    ensure_page_access(page, db, user, "eliminar comentarios de")
+    is_admin = is_admin_user(user)
     
-    if not (is_admin or comment.author_id == user.get("id") or (page and page.created_by_id == user.get("id"))):
+    if not (is_admin or comment.author_id == user.get("id") or page.created_by_id == user.get("id")):
         raise HTTPException(status_code=403, detail="No tienes permisos para eliminar este comentario.")
         
     # Borrar respuestas anidadas si es un comentario padre
@@ -742,8 +823,8 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
         },
         {
             "space_key": "ENG",
-            "title": "[PRIVADO] Credenciales de Despliegue de Producción",
-            "content": "# CREDENCIALES CRÍTICAS\n\n> [!CAUTION]\n> Esta información es altamente restringida.\n\n* **Host base de datos:** `prod-mysql.internal`\n* **Clave de cifrado simétrico:** `df789asudf9a8sdhfg234`\n* **SSH Keys:** Guardadas en el llavero seguro.",
+            "title": "[PRIVADO] Ejemplo de Procedimiento de Despliegue",
+            "content": "# Procedimiento Privado de Despliegue\n\n> [!CAUTION]\n> Esta página es solo un ejemplo de contenido restringido para pruebas.\n\n* **Entorno:** `staging`\n* **Responsable:** Equipo de plataforma\n* **Notas:** No guardes credenciales reales dentro de GateWiki.",
             "is_restricted": True,
             "allowed_emails": "admin@gatestack.dev"
         }
@@ -757,6 +838,7 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
                 space_key=pd["space_key"],
                 title=pd["title"],
                 content=pd["content"],
+                subtopics=pd.get("subtopics", ""),
                 created_by_email=user.get("email"),
                 created_by_name=user.get("full_name"),
                 created_by_id=user.get("id"),

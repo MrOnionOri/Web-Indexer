@@ -1,5 +1,6 @@
 import React from "react";
-import { Sparkles, FileText, Folder, Lock, Globe, Trash2 } from "lucide-react";
+import { Sparkles, FileText, Folder, Lock, Globe, Trash2, ArrowRight, ListTree, Settings } from "lucide-react";
+import { parseSubtopics } from "../subtopics";
 
 interface UserProfile {
   id: string;
@@ -25,6 +26,7 @@ interface Page {
   space_key: string;
   title: string;
   content: string;
+  subtopics?: string;
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;
@@ -41,6 +43,7 @@ interface DashboardProps {
   filteredPages: Page[];
   activeSpaceFilter: string | null;
   onReadPage: (id: string) => void;
+  onOpenSpace: (key: string) => void;
   onDeletePage: (id: string) => void;
   hasDelete: boolean;
   onEditSpace: (space: Space) => void;
@@ -53,6 +56,7 @@ export default function Dashboard({
   filteredPages,
   activeSpaceFilter,
   onReadPage,
+  onOpenSpace,
   onDeletePage,
   hasDelete,
   onEditSpace
@@ -70,10 +74,16 @@ export default function Dashboard({
     });
   };
 
+  const pageCountBySpace = spaces.reduce((acc, space) => {
+    acc[space.key] = pages.filter(page => page.space_key === space.key).length;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const activeSpace = spaces.find(s => s.key === activeSpaceFilter);
+
   return (
     <div className="subview">
       {(() => {
-        const activeSpace = spaces.find(s => s.key === activeSpaceFilter);
         if (activeSpace) {
           return (
             <div className="welcome-banner space-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -102,7 +112,8 @@ export default function Dashboard({
                       style={{ padding: "6px 12px", fontSize: "13px" }}
                       onClick={() => onEditSpace(activeSpace)}
                     >
-                      Configuración de Espacio
+                      <Settings size={14} />
+                      Configuración
                     </button>
                   </div>
                 )}
@@ -156,63 +167,92 @@ export default function Dashboard({
         </div>
       </div>
 
+      {!activeSpaceFilter ? (
+        <div className="spaces-hub-grid">
+          {spaces.length === 0 ? (
+            <div className="card empty-hub-card">
+              <Folder size={28} />
+              <h2>No hay espacios disponibles</h2>
+              <p className="text-muted">Crea un espacio para empezar a organizar temas y subtemas.</p>
+            </div>
+          ) : (
+            spaces.map(space => (
+              <article key={space.id} className="space-hub-card">
+                <button className="space-hub-main" type="button" onClick={() => onOpenSpace(space.key)}>
+                  <div className="space-hub-top">
+                    <span className="space-nav-badge">{space.key}</span>
+                    {space.is_restricted && <span className="badge-privacy restricted"><Lock size={12} /> Restringido</span>}
+                  </div>
+                  <h2>{space.name}</h2>
+                  <p>{space.description || "Sin descripción disponible."}</p>
+                  <div className="space-hub-meta">
+                    <span><FileText size={14} /> {pageCountBySpace[space.key] || 0} temas</span>
+                    <span><ListTree size={14} /> Hub</span>
+                  </div>
+                </button>
+                <div className="space-hub-actions">
+                  <button type="button" className="btn-secondary" onClick={() => onOpenSpace(space.key)}>
+                    Abrir hub <ArrowRight size={14} />
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      ) : (
       <div className="dashboard-grid">
         <div className="card grid-main">
           <div className="card-header">
-            <h2>Páginas de conocimiento {activeSpaceFilter ? `en espacio [${activeSpaceFilter}]` : ""}</h2>
+            <h2>Temas {activeSpaceFilter ? `en [${activeSpaceFilter}]` : ""}</h2>
           </div>
-          <div className="table-responsive">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Título</th>
-                  <th>Espacio</th>
-                  <th>Creador</th>
-                  <th>Fecha</th>
-                  <th>Visibilidad</th>
-                  <th className="text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPages.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: "center" }} className="text-muted">
-                      No hay páginas de conocimiento que coincidan con la búsqueda.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredPages.map(p => (
-                    <tr key={p.id}>
-                      <td>
-                        <span className="row-page-title" onClick={() => onReadPage(p.id)}>
-                          {p.title}
-                        </span>
-                      </td>
-                      <td><span className="space-badge">{p.space_key}</span></td>
-                      <td>{p.created_by_name}</td>
-                      <td>{formatDate(p.created_at)}</td>
-                      <td>
+          <div className="topics-index-list">
+            {filteredPages.length === 0 ? (
+              <div className="empty-hub-card compact">
+                <FileText size={24} />
+                <p className="text-muted">No hay temas que coincidan con la búsqueda.</p>
+              </div>
+            ) : (
+              filteredPages.map(p => {
+                const subtopics = parseSubtopics(p.subtopics).slice(0, 4);
+                return (
+                  <article key={p.id} className="topic-index-card">
+                    <div className="topic-index-header">
+                      <button className="topic-index-title" onClick={() => onReadPage(p.id)}>
+                        <FileText size={17} />
+                        <span>{p.title}</span>
+                      </button>
+                      <div className="topic-index-actions">
                         {p.is_restricted ? (
                           <span className="badge-privacy restricted"><Lock size={12} /> Privado</span>
                         ) : (
                           <span className="badge-privacy public"><Globe size={12} /> Público</span>
                         )}
-                      </td>
-                      <td className="text-right">
-                        <button className="btn-table-action" onClick={() => onReadPage(p.id)} title="Leer">
-                          <Globe size={14} />
-                        </button>
                         {(hasDelete || p.created_by_id === currentUser.id) && (
                           <button className="btn-table-action delete" onClick={() => onDeletePage(p.id)} title="Eliminar">
                             <Trash2 size={14} />
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+                    <div className="topic-index-meta">
+                      <span>{p.created_by_name}</span>
+                      <span>{formatDate(p.created_at)}</span>
+                    </div>
+                    {subtopics.length > 0 && (
+                      <div className="subtopics-list">
+                        {subtopics.map((subtopic, index) => (
+                          <button key={`${p.id}-${index}`} type="button" onClick={() => onReadPage(p.id)} className="subtopic-link">
+                            <ListTree size={13} />
+                            <span>{subtopic.title}</span>
+                            {subtopic.content && <small>{subtopic.content.replace(/[#*_`]/g, "").slice(0, 90)}</small>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -239,6 +279,7 @@ export default function Dashboard({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
