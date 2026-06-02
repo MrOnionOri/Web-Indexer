@@ -9,6 +9,7 @@ import Dashboard from "./components/Dashboard";
 import PageRead from "./components/PageRead";
 import PageEdit from "./components/PageEdit";
 import AdminPanel from "./components/AdminPanel";
+import FeedbackModal from "./components/FeedbackModal";
 import SpaceSettings from "./components/SpaceSettings";
 import TopicOrder from "./components/TopicOrder";
 import MarkdownContent from "./components/MarkdownContent";
@@ -87,6 +88,7 @@ export default function App() {
   const [editPageAllowedEmails, setEditPageAllowedEmails] = useState("");
   const [editPageCommentsAllowed, setEditPageCommentsAllowed] = useState(true);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // Admin states
   const [seedSuccessMsg, setSeedSuccessMsg] = useState("");
@@ -567,6 +569,7 @@ export default function App() {
           hasAdmin={hasAdmin}
           onCreatePageClick={() => navigate("/edit")}
           onAdminPanelClick={() => navigate("/admin")}
+          onFeedbackClick={() => setFeedbackOpen(true)}
           theme={theme}
           onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
         />
@@ -679,6 +682,7 @@ export default function App() {
                     onSubmit={handleUpdateSpace}
                     onDeleteSpace={handleDeleteSpace}
                     onCancel={() => navigate(`/space/${activeSpace.key}`)}
+                    token={token}
                   />
                 );
               }
@@ -687,6 +691,8 @@ export default function App() {
           )}
         </div>
       </main>
+
+      <FeedbackModal token={token} activePage={activePage} open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       {/* Space Modal Overlay */}
       {spaceModalOpen && (

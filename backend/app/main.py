@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import admin, apps, auth, portal, projects
+from app.api.routes import admin, apps, auth, feedback, portal, projects
 from app.core.config import get_settings
 from app.db.session import Base, SessionLocal, engine, check_db_connection
 from app.services.bootstrap import bootstrap
@@ -41,6 +41,7 @@ async def db_maintenance_middleware(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(apps.router)
+app.include_router(feedback.router)
 app.include_router(portal.router)
 app.include_router(projects.router)
 

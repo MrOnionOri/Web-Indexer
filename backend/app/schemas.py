@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import AppAccessRequestStatus, OverrideEffect, ProjectStatus, UserStatus
+from app.models import AppAccessRequestStatus, FeedbackStatus, OverrideEffect, ProjectStatus, UserStatus
 
 
 class TokenResponse(BaseModel):
@@ -169,6 +169,53 @@ class PortalHomeSettingsUpdateRequest(BaseModel):
     welcome_message: str = Field(min_length=2, max_length=1200)
     hero_image_url: str | None = Field(default=None, max_length=500)
     announcement: str = Field(default="", max_length=255)
+
+
+class FeedbackInternalNoteRead(BaseModel):
+    id: str
+    feedback_id: str
+    author_user_id: str
+    author_name: str
+    note: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FeedbackRead(BaseModel):
+    id: str
+    source_app: str
+    title: str
+    message: str
+    status: FeedbackStatus
+    page_id: str | None
+    page_title: str | None
+    space_key: str | None
+    created_by_user_id: str
+    created_by_name: str
+    created_by_email: str
+    public_response: str
+    responded_by_user_id: str | None
+    responded_by_name: str | None
+    responded_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    internal_notes: list[FeedbackInternalNoteRead] = []
+
+    model_config = {"from_attributes": True}
+
+
+class FeedbackRespondRequest(BaseModel):
+    public_response: str = Field(min_length=1, max_length=4000)
+    status: FeedbackStatus = FeedbackStatus.resolved
+
+
+class FeedbackStatusUpdateRequest(BaseModel):
+    status: FeedbackStatus
+
+
+class FeedbackInternalNoteCreateRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=4000)
 
 
 class ProjectRead(BaseModel):

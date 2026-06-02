@@ -962,6 +962,129 @@ button {
   line-height: 1.45;
 }
 
+.feedback-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.4fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.feedback-list,
+.feedback-detail,
+.internal-notes {
+  display: grid;
+  gap: 14px;
+}
+
+.feedback-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid #e7eaf0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #263044;
+  text-align: left;
+}
+
+.feedback-list-item.active {
+  border-color: #cfe0ff;
+  background: #f4f8ff;
+}
+
+.feedback-list-item strong,
+.feedback-list-item small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-list-item small {
+  margin-top: 4px;
+  color: #627180;
+}
+
+.feedback-detail select {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid #dbe2eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.feedback-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e7eaf0;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.feedback-message svg {
+  color: #1461ff;
+}
+
+.feedback-message p,
+.internal-note p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.feedback-form {
+  display: grid;
+  gap: 10px;
+}
+
+.feedback-form label {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.feedback-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #dbe2eb;
+  border-radius: 8px;
+  color: #101114;
+  font: inherit;
+  resize: vertical;
+}
+
+.internal-notes {
+  margin-top: 10px;
+  padding-top: 18px;
+  border-top: 1px solid #eef1f6;
+}
+
+.internal-notes h4 {
+  margin: 0;
+}
+
+.internal-note {
+  padding: 12px;
+  border: 1px solid #e7eaf0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.internal-note strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
 .home-hero {
   min-height: 320px;
   display: flex;

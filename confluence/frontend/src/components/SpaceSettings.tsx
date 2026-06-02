@@ -1,5 +1,6 @@
-import React, { FormEvent, useState, useMemo } from "react";
-import { ArrowLeft, Lock, Globe, Save, AlertTriangle, ShieldAlert } from "lucide-react";
+import React, { FormEvent, useEffect, useState, useMemo } from "react";
+import { ArrowLeft, Lock, Globe, Save, ShieldAlert, HardDrive } from "lucide-react";
+import { api, StorageWorkspace, StorageRequest } from "../api";
 
 interface UserProfile {
   id: string;
@@ -43,6 +44,7 @@ interface SpaceSettingsProps {
   onSubmit: (e: FormEvent) => void;
   onDeleteSpace: (id: string) => void;
   onCancel: () => void;
+  token: string | null;
 }
 
 export default function SpaceSettings({
@@ -61,7 +63,8 @@ export default function SpaceSettings({
   setEditSpaceAllowedEmails,
   onSubmit,
   onDeleteSpace,
-  onCancel
+  onCancel,
+  token
 }: SpaceSettingsProps) {
   // Parse allowed emails to render as tag badges
   const emailList = (activeSpace.allowed_emails || "")
@@ -71,6 +74,17 @@ export default function SpaceSettings({
 
   const [searchText, setSearchText] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [storage, setStorage] = useState<StorageWorkspace | null>(null);
+  const [storageRequest, setStorageRequest] = useState<StorageRequest | null>(null);
+  const [storageGb, setStorageGb] = useState(5);
+  const [storageReason, setStorageReason] = useState("");
+  const [storageNotice, setStorageNotice] = useState("");
+
+  useEffect(() => {
+    api.spaceStorage(token, activeSpace.id)
+      .then(setStorage)
+      .catch(() => setStorage(null));
+  }, [token, activeSpace.id]);
 
   const handleAddEmail = (email: string) => {
     const emails = editSpaceAllowedEmails.split(",").map(em => em.trim()).filter(Boolean);
@@ -98,6 +112,27 @@ export default function SpaceSettings({
                          perms.has("gatewiki:delete_workspace") || 
                          perms.has("gatewiki:delete") || 
                          activeSpace.created_by_id === currentUser.id;
+  const canRequestStorage =
+    currentUser.is_platform_admin ||
+    currentUser.permissions.includes("gatestorage:request") ||
+    activeSpace.created_by_id === currentUser.id;
+
+  const handleRequestStorage = async (event: FormEvent) => {
+    event.preventDefault();
+    setStorageNotice("");
+    try {
+      const request = await api.requestSpaceStorage(token, activeSpace.id, storageGb, storageReason);
+      setStorageRequest(request);
+      setStorageNotice("Solicitud enviada. Un admin asignara la cuota de almacenamiento.");
+    } catch (error: any) {
+      setStorageNotice(error.message || "No se pudo solicitar almacenamiento.");
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (!bytes) return "0 GB";
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  };
 
   return (
     <div className="subview">
@@ -338,6 +373,43 @@ export default function SpaceSettings({
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <div className="card storage-card">
+        <div className="card-header">
+          <h2><HardDrive size={18} /> GateStorage</h2>
+        </div>
+        <div className="storage-card-body">
+          {storage ? (
+            <div className="storage-summary">
+              <strong>Storage activo para {storage.workspace_key}</strong>
+              <p>Cuota asignada: {formatBytes(storage.quota_bytes)} · Uso actual: {formatBytes(storage.used_bytes)}</p>
+              <span className="storage-status">{storage.status}</span>
+            </div>
+          ) : (
+            <form className="storage-request-form" onSubmit={handleRequestStorage}>
+              <div>
+                <strong>Este workspace aun no tiene almacenamiento asignado.</strong>
+                <p className="text-small">El storage no se crea automaticamente. El dueno del workspace debe solicitarlo y un admin aprueba la cuota.</p>
+              </div>
+              <div className="form-row">
+                <div className="form-group flex-1">
+                  <label>GB solicitados</label>
+                  <input type="number" min={1} value={storageGb} onChange={(e) => setStorageGb(Number(e.target.value))} disabled={!canRequestStorage} />
+                </div>
+                <div className="form-group flex-2">
+                  <label>Motivo</label>
+                  <input value={storageReason} onChange={(e) => setStorageReason(e.target.value)} placeholder="Para adjuntos, archivos de referencia, datasets..." disabled={!canRequestStorage} />
+                </div>
+              </div>
+              {storageRequest && <p className="text-small">Solicitud actual: {storageRequest.status}</p>}
+              {storageNotice && <p className="text-small">{storageNotice}</p>}
+              <button className="btn-primary" disabled={!canRequestStorage}>
+                Solicitar storage
+              </button>
+            </form>
+          )}
         </div>
       </div>
 

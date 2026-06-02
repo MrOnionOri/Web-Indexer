@@ -79,6 +79,38 @@ export interface PermissionOption {
   description: string;
 }
 
+export type FeedbackStatus = "open" | "in_progress" | "resolved" | "closed";
+
+export interface FeedbackInternalNote {
+  id: string;
+  feedback_id: string;
+  author_user_id: string;
+  author_name: string;
+  note: string;
+  created_at: string;
+}
+
+export interface FeedbackItem {
+  id: string;
+  source_app: string;
+  title: string;
+  message: string;
+  status: FeedbackStatus;
+  page_id: string | null;
+  page_title: string | null;
+  space_key: string | null;
+  created_by_user_id: string;
+  created_by_name: string;
+  created_by_email: string;
+  public_response: string;
+  responded_by_user_id: string | null;
+  responded_by_name: string | null;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+  internal_notes: FeedbackInternalNote[];
+}
+
 export interface PortalHomeSettings {
   id: string;
   headline: string;
@@ -164,6 +196,22 @@ export const api = {
     request<AppAccessRequest>(`/apps/access-requests/${requestId}`, {
       method: "PATCH",
       body: JSON.stringify({ status, admin_notes: adminNotes }),
+    }),
+  feedback: () => request<FeedbackItem[]>("/feedback"),
+  respondFeedback: (feedbackId: string, publicResponse: string, status: FeedbackStatus = "resolved") =>
+    request<FeedbackItem>(`/feedback/${feedbackId}/respond`, {
+      method: "POST",
+      body: JSON.stringify({ public_response: publicResponse, status }),
+    }),
+  updateFeedbackStatus: (feedbackId: string, status: FeedbackStatus) =>
+    request<FeedbackItem>(`/feedback/${feedbackId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  addFeedbackInternalNote: (feedbackId: string, note: string) =>
+    request<FeedbackItem>(`/feedback/${feedbackId}/internal-notes`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
     }),
   homeSettings: () => request<PortalHomeSettings>("/portal/home"),
   updateHomeSettings: (settings: Omit<PortalHomeSettings, "id" | "updated_at">) =>

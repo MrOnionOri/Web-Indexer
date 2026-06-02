@@ -17,6 +17,9 @@ BASE_PERMISSIONS = {
     "projects:upload": "Upload project archives for review",
     "projects:review": "Review uploaded project metadata",
     "projects:deploy": "Approve projects for deployment",
+    "feedback:view": "View platform feedback submissions",
+    "feedback:respond": "Respond to platform feedback submissions",
+    "feedback:internal": "Create and view internal feedback notes",
     "audit:view": "View security audit logs",
     "gatewiki:view": "View GateWiki spaces and pages",
     "gatewiki:create": "Create GateWiki spaces and pages (legacy)",
@@ -29,11 +32,17 @@ BASE_PERMISSIONS = {
     "gatewiki:edit_page": "Edit pages inside GateWiki spaces",
     "gatewiki:delete_workspace": "Delete GateWiki spaces/workspaces",
     "gatewiki:delete_page": "Delete pages inside GateWiki spaces",
+    "gatestorage:view": "View GateStorage workspace allocations",
+    "gatestorage:request": "Request storage for owned workspaces",
+    "gatestorage:admin": "Review and administer GateStorage allocations",
 }
 
 TEMPLATES = {
     "Platform Admin Template": list(BASE_PERMISSIONS.keys()),
-    "App Manager Template": ["apps:view", "apps:manage", "portal:manage", "projects:upload", "projects:review"],
+    "App Manager Template": ["apps:view", "apps:manage", "portal:manage", "projects:upload", "projects:review", "feedback:view", "feedback:respond"],
+    "Feedback Manager Template": ["feedback:view", "feedback:respond", "feedback:internal"],
+    "GateStorage Admin Template": ["gatestorage:view", "gatestorage:request", "gatestorage:admin"],
+    "GateStorage User Template": ["gatestorage:view", "gatestorage:request"],
     "Viewer Template": ["apps:view", "gatewiki:view"],
     "GateWiki Admin Template": [
         "gatewiki:view",

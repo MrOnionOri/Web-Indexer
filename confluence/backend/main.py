@@ -39,6 +39,12 @@ GATESTACK_FALLBACK_URLS = [
     for url in os.getenv("GATESTACK_FALLBACK_URLS", "").split(",")
     if url.strip()
 ]
+GATESTORAGE_API_URL = os.getenv("GATESTORAGE_API_URL", "http://192.168.1.150:8002").rstrip("/")
+GATESTORAGE_FALLBACK_URLS = [
+    url.strip().rstrip("/")
+    for url in os.getenv("GATESTORAGE_FALLBACK_URLS", "").split(",")
+    if url.strip()
+]
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
@@ -103,6 +109,27 @@ class CommentReactionModel(Base):
     emoji = Column(String(10), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
+class FeedbackItemModel(Base):
+    __tablename__ = "feedback_items"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_app = Column(String(80), default="gatewiki", index=True)
+    title = Column(String(180), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String(40), default="open", index=True)
+    page_id = Column(String(36), nullable=True)
+    page_title = Column(String(180), nullable=True)
+    space_key = Column(String(20), nullable=True)
+    created_by_user_id = Column(String(36), index=True, nullable=False)
+    created_by_name = Column(String(160), nullable=False)
+    created_by_email = Column(String(255), index=True, nullable=False)
+    public_response = Column(Text, default="")
+    responded_by_user_id = Column(String(36), nullable=True)
+    responded_by_name = Column(String(160), nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 def init_db_for_local_dev() -> None:
     Base.metadata.create_all(bind=engine)
 
@@ -136,6 +163,11 @@ def init_db_for_local_dev() -> None:
             existing_c_cols = {row[0] for row in c_result.fetchall()}
             if "parent_id" not in existing_c_cols:
                 conn.execute(text("ALTER TABLE confluence_comments ADD COLUMN parent_id VARCHAR(36) NULL"))
+
+            f_result = conn.execute(text("SHOW COLUMNS FROM feedback_items"))
+            existing_f_cols = {row[0] for row in f_result.fetchall()}
+            if "public_response" not in existing_f_cols:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN public_response TEXT NULL"))
                 
             conn.commit()
     except Exception as e:
@@ -233,6 +265,37 @@ class CommentRead(BaseModel):
     class Config:
         from_attributes = True
 
+
+class FeedbackCreate(BaseModel):
+    title: str
+    message: str
+    page_id: Optional[str] = None
+    page_title: Optional[str] = None
+    space_key: Optional[str] = None
+
+
+class FeedbackRead(BaseModel):
+    id: str
+    source_app: str
+    title: str
+    message: str
+    status: str
+    page_id: Optional[str] = None
+    page_title: Optional[str] = None
+    space_key: Optional[str] = None
+    public_response: Optional[str] = ""
+    responded_by_name: Optional[str] = None
+    responded_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class StorageRequestCreate(BaseModel):
+    requested_gb: int
+    reason: str = ""
+
 # ----------------- SEGURIDAD & INTEGRACIÓN SSO -----------------
 security = HTTPBearer()
 
@@ -302,6 +365,48 @@ def forward_gatestack_request(method: str, path: str, request: Optional[Request]
             last_error = str(exc)
             continue
 
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
+
+
+def get_gatestorage_urls(request: Optional[Request] = None) -> List[str]:
+    inferred_urls: List[str] = []
+    if request:
+        host = request.url.hostname
+        if host and host not in {"localhost", "127.0.0.1"}:
+            inferred_urls.append(f"{request.url.scheme}://{host}:8002")
+    return list(dict.fromkeys([
+        GATESTORAGE_API_URL,
+        *inferred_urls,
+        *GATESTORAGE_FALLBACK_URLS,
+        "http://host.docker.internal:8002",
+        "http://localhost:8002",
+        "http://127.0.0.1:8002",
+    ]))
+
+
+def forward_gatestorage_request(method: str, path: str, request: Request, **kwargs):
+    last_error = "GateStorage no esta disponible."
+    headers = dict(kwargs.pop("headers", {}) or {})
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        headers["Authorization"] = auth_header
+
+    for base_url in get_gatestorage_urls(request):
+        try:
+            response = requests.request(method, f"{base_url}{path}", timeout=4.0, headers=headers, **kwargs)
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {"detail": response.text or "Respuesta invalida de GateStorage."}
+            if response.status_code >= 400:
+                detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+                raise HTTPException(status_code=response.status_code, detail=detail)
+            return payload
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = str(exc)
+            continue
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
 
 def check_permission(user: dict, required_permission: str):
@@ -389,6 +494,45 @@ def get_users(db: Session = Depends(get_db), user: dict = Depends(get_current_us
     except Exception as e:
         print("Error fetching users from GateStack db:", e)
         return [{"email": user.get("email"), "full_name": user.get("full_name")}]
+
+
+# --- Feedback hacia GateStack ---
+@app.post("/api/feedback", response_model=FeedbackRead)
+def create_feedback(payload: FeedbackCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+
+    if payload.page_id:
+        page = db.query(PageModel).filter(PageModel.id == payload.page_id).first()
+        if not page:
+            raise HTTPException(status_code=404, detail="Pagina no encontrada para feedback.")
+        ensure_page_access(page, db, user, "enviar feedback sobre")
+
+    item = FeedbackItemModel(
+        source_app="gatewiki",
+        title=payload.title.strip(),
+        message=payload.message.strip(),
+        page_id=payload.page_id,
+        page_title=payload.page_title,
+        space_key=(payload.space_key or "").upper() or None,
+        created_by_user_id=user.get("id"),
+        created_by_name=user.get("full_name"),
+        created_by_email=user.get("email"),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.get("/api/feedback/my", response_model=List[FeedbackRead])
+def get_my_feedback(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+    return (
+        db.query(FeedbackItemModel)
+        .filter(FeedbackItemModel.created_by_user_id == user.get("id"))
+        .order_by(FeedbackItemModel.created_at.desc())
+        .all()
+    )
 
 # --- Espacios ---
 @app.get("/api/spaces", response_model=List[SpaceRead])
@@ -483,6 +627,52 @@ def delete_space(space_id: str, db: Session = Depends(get_db), user: dict = Depe
     db.delete(space)
     db.commit()
     return
+
+
+# --- Storage por workspace ---
+@app.get("/api/spaces/{space_id}/storage")
+def get_space_storage(space_id: str, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+    space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
+    if not space:
+        raise HTTPException(status_code=404, detail="Espacio no encontrado.")
+
+    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
+        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede ver el storage de este workspace.")
+
+    return forward_gatestorage_request("GET", f"/api/workspaces/gatewiki/{space.key.upper()}", request=request)
+
+
+@app.post("/api/spaces/{space_id}/storage/request")
+def request_space_storage(
+    space_id: str,
+    payload: StorageRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    check_permission(user, "gatestorage:request")
+    space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
+    if not space:
+        raise HTTPException(status_code=404, detail="Espacio no encontrado.")
+
+    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
+        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede solicitar storage.")
+
+    requested_bytes = payload.requested_gb * 1024 * 1024 * 1024
+    return forward_gatestorage_request(
+        "POST",
+        "/api/storage-requests",
+        request=request,
+        json={
+            "source_app": "gatewiki",
+            "external_workspace_id": space.id,
+            "workspace_key": space.key.upper(),
+            "workspace_name": space.name,
+            "requested_bytes": requested_bytes,
+            "reason": payload.reason,
+        },
+    )
 
 
 # --- Páginas ---

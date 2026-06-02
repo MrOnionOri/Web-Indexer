@@ -50,6 +50,13 @@ class AppAccessRequestStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class FeedbackStatus(str, enum.Enum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -168,6 +175,36 @@ class PortalHomeSettings(Base, TimestampMixin):
     welcome_message: Mapped[str] = mapped_column(Text, default="Accede a tus aplicaciones aprobadas desde un solo lugar.")
     hero_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     announcement: Mapped[str] = mapped_column(String(255), default="")
+
+
+class FeedbackItem(Base, TimestampMixin):
+    __tablename__ = table_name("feedback_items")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    source_app: Mapped[str] = mapped_column(String(80), default="gatewiki", index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    message: Mapped[str] = mapped_column(Text)
+    status: Mapped[FeedbackStatus] = mapped_column(Enum(FeedbackStatus), default=FeedbackStatus.open, index=True)
+    page_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    page_title: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    space_key: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_by_name: Mapped[str] = mapped_column(String(160))
+    created_by_email: Mapped[str] = mapped_column(String(255), index=True)
+    public_response: Mapped[str] = mapped_column(Text, default="")
+    responded_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    responded_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class FeedbackInternalNote(Base, TimestampMixin):
+    __tablename__ = table_name("feedback_internal_notes")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    feedback_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('feedback_items')}.id"), index=True)
+    author_user_id: Mapped[str] = mapped_column(String(36))
+    author_name: Mapped[str] = mapped_column(String(160))
+    note: Mapped[str] = mapped_column(Text)
 
 
 class ProjectUpload(Base, TimestampMixin):

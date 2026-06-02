@@ -14,6 +14,7 @@ import { api, Me, PortalHomeSettings, ProjectUpload, RegisteredApp, Template, Us
 import { Metric, NavButton } from "./components/ui";
 import { AppsView } from "./views/AppsView";
 import { DashboardView } from "./views/DashboardView";
+import { FeedbackView } from "./views/FeedbackView";
 import { HomeAdminView } from "./views/HomeAdminView";
 import { IntegrationView } from "./views/IntegrationView";
 import { PasswordResetView } from "./views/PasswordResetView";
@@ -21,13 +22,14 @@ import { ProjectsView } from "./views/ProjectsView";
 import { SecurityView } from "./views/SecurityView";
 import { UserViewMode, UsersView } from "./views/UsersView";
 
-type View = "dashboard" | "apps" | "users" | "admin-apps" | "admin-home" | "projects" | "security" | "integration";
+type View = "dashboard" | "apps" | "users" | "admin-apps" | "admin-home" | "feedback" | "projects" | "security" | "integration";
 
 function routeState(pathname: string): { view: View; userViewMode: UserViewMode } {
   if (pathname.startsWith("/admin/users/accounts")) return { view: "users", userViewMode: "crud" };
   if (pathname.startsWith("/admin/users")) return { view: "users", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/apps")) return { view: "admin-apps", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/home")) return { view: "admin-home", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/feedback")) return { view: "feedback", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/projects")) return { view: "projects", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/security")) return { view: "security", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/integration")) return { view: "integration", userViewMode: "permissions" };
@@ -41,6 +43,7 @@ function routePath(view: View, userViewMode: UserViewMode = "permissions") {
   if (view === "users") return userViewMode === "crud" ? "/admin/users/accounts" : "/admin/users/permissions";
   if (view === "admin-apps") return "/admin/apps";
   if (view === "admin-home") return "/admin/home";
+  if (view === "feedback") return "/admin/feedback";
   if (view === "projects") return "/admin/projects";
   if (view === "security") return "/admin/security";
   if (view === "integration") return "/admin/integration";
@@ -69,12 +72,13 @@ export function App() {
   const [refreshCount, setRefreshCount] = useState(0);
 
   const can = useMemo(() => new Set(me?.permissions ?? []), [me]);
-  const adminViews: View[] = ["users", "admin-apps", "admin-home", "projects", "security", "integration"];
+  const adminViews: View[] = ["users", "admin-apps", "admin-home", "feedback", "projects", "security", "integration"];
   const adminToolsActive = adminViews.includes(view);
   const canUseAdminTools =
     can.has("users:view") ||
     can.has("apps:manage") ||
     can.has("portal:manage") ||
+    can.has("feedback:view") ||
     can.has("projects:review") ||
     can.has("templates:view") ||
     can.has("users:permissions");
@@ -357,6 +361,11 @@ export function App() {
                   Home
                 </button>
               )}
+              {can.has("feedback:view") && (
+                <button className={`subnav-item ${view === "feedback" ? "active" : ""}`} onClick={() => navigate("feedback")}>
+                  Feedback
+                </button>
+              )}
               {can.has("projects:review") && (
                 <button className={`subnav-item ${view === "projects" ? "active" : ""}`} onClick={() => navigate("projects")}>
                   Proyectos
@@ -422,6 +431,7 @@ export function App() {
             refresh={() => api.homeSettings().then(setHomeSettings).catch((err) => setLoadError(String(err)))}
           />
         )}
+        {view === "feedback" && <FeedbackView permissions={me.permissions} />}
         {view === "projects" && <ProjectsView projects={projects} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} />}
         {view === "security" && <SecurityView templates={templates} permissions={me.permissions} />}
         {view === "integration" && <IntegrationView />}
@@ -457,6 +467,7 @@ function viewTitle(view: View) {
     users: "Gestion de usuarios",
     "admin-apps": "Admin de aplicaciones",
     "admin-home": "Personalizar home",
+    feedback: "Feedback",
     projects: "Revision de proyectos",
     security: "Permisos y templates",
     integration: "Integracion API",
