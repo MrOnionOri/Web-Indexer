@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, FormEvent } from "react";
+﻿import React, { useState, useEffect, useMemo, FormEvent } from "react";
 import { X } from "lucide-react";
 
 // Import modular components
@@ -10,6 +10,7 @@ import PageRead from "./components/PageRead";
 import PageEdit from "./components/PageEdit";
 import AdminPanel from "./components/AdminPanel";
 import SpaceSettings from "./components/SpaceSettings";
+import TopicOrder from "./components/TopicOrder";
 import MarkdownContent from "./components/MarkdownContent";
 import { api, Comment, Page, Space, UserListItem, UserProfile } from "./api";
 
@@ -39,8 +40,9 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<UserListItem[]>([]);
   const [activeSpaceFilter, setActiveSpaceFilter] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<Page | null>(null);
+  const [activeSubtopicIndex, setActiveSubtopicIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [currentView, setCurrentView] = useState<"dashboard" | "read" | "edit" | "admin" | "space-settings">("dashboard");
+  const [currentView, setCurrentView] = useState<"dashboard" | "read" | "edit" | "admin" | "space-settings" | "topic-order">("dashboard");
 
   // Theme states
   const [theme, setTheme] = useState<"dark" | "light">(
@@ -118,7 +120,7 @@ export default function App() {
     }
   }, [currentUser, token]);
 
-  // Sincronizar campos de edición de espacio en vista de configuración
+  // Sincronizar campos de ediciÃ³n de espacio en vista de configuraciÃ³n
   useEffect(() => {
     if (currentView === "space-settings" && activeSpaceFilter && spaces.length > 0) {
       const spaceObj = spaces.find(s => s.key.toUpperCase() === activeSpaceFilter.toUpperCase());
@@ -149,7 +151,7 @@ export default function App() {
     } catch (err) {
       localStorage.removeItem("gatewiki_token");
       setToken(null);
-      setLoginError("Sesión inválida o conexión perdida con GateStack.");
+      setLoginError("SesiÃ³n invÃ¡lida o conexiÃ³n perdida con GateStack.");
     } finally {
       setInitialLoading(false);
     }
@@ -183,22 +185,33 @@ export default function App() {
     if (path === "/" || path === "/dashboard") {
       setCurrentView("dashboard");
       setActiveSpaceFilter(null);
+      setActiveSubtopicIndex(null);
     } else if (path.startsWith("/space/")) {
-      if (path.endsWith("/settings")) {
+      if (path.endsWith("/order")) {
+        const key = path.substring(7, path.length - 6);
+        setCurrentView("topic-order");
+        setActiveSpaceFilter(key.toUpperCase());
+        setActiveSubtopicIndex(null);
+      } else if (path.endsWith("/settings")) {
         const key = path.substring(7, path.length - 9);
         setCurrentView("space-settings");
         setActiveSpaceFilter(key.toUpperCase());
+        setActiveSubtopicIndex(null);
       } else {
         const key = path.substring(7);
         setCurrentView("dashboard");
         setActiveSpaceFilter(key.toUpperCase());
+        setActiveSubtopicIndex(null);
       }
     } else if (path.startsWith("/page/")) {
-      const id = path.substring(6);
+      const segments = path.split("/").filter(Boolean);
+      const id = segments[1];
+      const subtopicIndex = segments[2] === "subtopic" ? Number.parseInt(segments[3] || "", 10) : null;
       setCurrentView("read");
-      await fetchAndSetActivePage(id);
+      await fetchAndSetActivePage(id, Number.isFinite(subtopicIndex) ? subtopicIndex : null);
     } else if (path === "/edit") {
       setCurrentView("edit");
+      setActiveSubtopicIndex(null);
       setEditPageId(null);
       setEditPageTitle("");
       setEditPageSpace(activeSpaceFilter || "");
@@ -210,19 +223,24 @@ export default function App() {
     } else if (path.startsWith("/edit/")) {
       const id = path.substring(6);
       setCurrentView("edit");
+      setActiveSubtopicIndex(null);
       await fetchAndSetEditPage(id);
     } else if (path === "/admin") {
       setCurrentView("admin");
+      setActiveSubtopicIndex(null);
     } else {
       setCurrentView("dashboard");
       setActiveSpaceFilter(null);
+      setActiveSubtopicIndex(null);
     }
   };
 
-  const fetchAndSetActivePage = async (id: string) => {
+  const fetchAndSetActivePage = async (id: string, subtopicIndex: number | null = null) => {
     try {
       const pageData = await api.page(token, id);
       setActivePage(pageData);
+      setActiveSpaceFilter(pageData.space_key);
+      setActiveSubtopicIndex(subtopicIndex);
       fetchComments(id);
     } catch (error: any) {
       alert(error.message);
@@ -268,7 +286,7 @@ export default function App() {
         await fetchComments(activePage.id);
       }
     } catch (err: any) {
-      alert(err.message || "Error al procesar reacción.");
+      alert(err.message || "Error al procesar reacciÃ³n.");
     }
   };
 
@@ -308,10 +326,10 @@ export default function App() {
     try {
       const data = await api.login(loginEmail, loginPassword);
       if (data.must_reset_password) {
-        throw new Error("Debes restablecer tu contraseña en el panel de GateStack primero.");
+        throw new Error("Debes restablecer tu contraseÃ±a en el panel de GateStack primero.");
       }
       if (!data.access_token) {
-        throw new Error("GateStack no devolvió un token de acceso.");
+        throw new Error("GateStack no devolviÃ³ un token de acceso.");
       }
 
       localStorage.setItem("gatewiki_token", data.access_token);
@@ -383,7 +401,7 @@ export default function App() {
   };
 
   const handleDeleteSpace = async (id: string) => {
-    if (!confirm("¿Deseas eliminar este espacio y TODAS sus páginas permanentemente?")) return;
+    if (!confirm("Â¿Deseas eliminar este espacio y TODAS sus pÃ¡ginas permanentemente?")) return;
     try {
       await api.deleteSpace(token, id);
       await refreshData();
@@ -416,7 +434,9 @@ export default function App() {
   };
 
   const handleDeletePage = async (id: string) => {
-    if (!confirm("¿Deseas eliminar esta página de forma permanente?")) return;
+    if (!confirm("Â¿Deseas eliminar esta pÃ¡gina de forma permanente?")) return;
+
+    const returnSpaceKey = activeSpaceFilter || (activePage?.id === id ? activePage.space_key : null);
 
     try {
       await api.deletePage(token, id);
@@ -424,7 +444,16 @@ export default function App() {
       if (activePage?.id === id) {
         setActivePage(null);
       }
-      navigate("/dashboard");
+      navigate(returnSpaceKey ? `/space/${returnSpaceKey}` : "/dashboard");
+    } catch (error: any) {
+      alert(error.message);
+    }
+  };
+
+  const handleReorderPages = async (spaceKey: string, orderedPageIds: string[]) => {
+    try {
+      await api.reorderPages(token, spaceKey, orderedPageIds);
+      await refreshData();
     } catch (error: any) {
       alert(error.message);
     }
@@ -487,31 +516,6 @@ export default function App() {
     return <MarkdownContent content={md || ""} />;
   };
 
-  // Helper editor toolbar
-  const insertMdTag = (tag: string) => {
-    const textarea = document.getElementById("edit-page-content-input") as HTMLTextAreaElement;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = editPageContent;
-    const selectedText = text.substring(start, end);
-
-    let replacement = "";
-    if (tag === "h1") replacement = `# ${selectedText || "Título 1"}`;
-    else if (tag === "h2") replacement = `## ${selectedText || "Título 2"}`;
-    else if (tag === "bold") replacement = `**${selectedText || "Texto en negrita"}**`;
-    else if (tag === "italic") replacement = `*${selectedText || "Texto en itálica"}*`;
-    else if (tag === "code") replacement = `\`${selectedText || "código"}\``;
-    else if (tag === "list") replacement = `\n* ${selectedText || "Elemento"}`;
-    else if (tag.startsWith("code-block:")) {
-      const lang = tag.substring(11);
-      replacement = `\n\`\`\`${lang}\n${selectedText || "// escribe tu código aquí"}\n\`\`\`\n`;
-    }
-
-    setEditPageContent(text.substring(0, start) + replacement + text.substring(end));
-    textarea.focus();
-  };
-
   // Loader state
   if (initialLoading) {
     return (
@@ -547,8 +551,9 @@ export default function App() {
         activeSpaceFilter={activeSpaceFilter}
         onSelectSpace={(key) => navigate(key ? `/space/${key}` : "/dashboard")}
         onReadPage={(id) => navigate(`/page/${id}`)}
-        hasCreate={hasCreateSpace}
+        hasCreate={activeSpaceFilter ? hasCreatePage : hasCreateSpace}
         onAddSpaceClick={() => setSpaceModalOpen(true)}
+        onCreatePageClick={() => navigate("/edit")}
         onLogout={handleLogout}
         currentView={currentView}
       />
@@ -578,19 +583,38 @@ export default function App() {
               onOpenSpace={(key) => navigate(`/space/${key}`)}
               onDeletePage={handleDeletePage}
               hasDelete={hasDeletePage}
+              hasAdmin={hasAdmin}
+              onEditPage={(id) => navigate(`/edit/${id}`)}
+              onManageTopicOrder={(spaceKey) => navigate(`/space/${spaceKey}/order`)}
               onEditSpace={triggerEditSpace}
             />
+          )}
+
+          {currentView === "topic-order" && activeSpaceFilter && (
+            (() => {
+              const activeSpace = spaces.find(s => s.key === activeSpaceFilter);
+              if (!activeSpace) return <div>Cargando orden de temas...</div>;
+              return (
+                <TopicOrder
+                  activeSpace={activeSpace}
+                  pages={pages}
+                  onBackClick={() => navigate(`/space/${activeSpace.key}`)}
+                  onSaveOrder={handleReorderPages}
+                />
+              );
+            })()
           )}
 
           {currentView === "read" && activePage && (
             <PageRead
               currentUser={currentUser}
               activePage={activePage}
+              activeSubtopicIndex={activeSubtopicIndex}
               comments={comments}
               onAddComment={handleAddComment}
               onDeleteComment={handleDeleteComment}
               onToggleReaction={handleToggleReaction}
-              onBackClick={() => navigate("/dashboard")}
+              onBackClick={() => navigate(`/space/${activePage.space_key}`)}
               onEditClick={() => navigate(`/edit/${activePage.id}`)}
               onDeleteClick={handleDeletePage}
               hasEdit={hasEditPage}
@@ -620,7 +644,6 @@ export default function App() {
               allUsers={allUsers}
               onSubmit={handleCreateOrUpdatePage}
               onCancel={() => navigate(editPageId ? `/page/${editPageId}` : "/dashboard")}
-              insertMdTag={insertMdTag}
             />
           )}
 
@@ -659,7 +682,7 @@ export default function App() {
                   />
                 );
               }
-              return <div>Cargando configuración de espacio...</div>;
+              return <div>Cargando configuraciÃ³n de espacio...</div>;
             })()
           )}
         </div>
@@ -687,7 +710,7 @@ export default function App() {
                 />
               </div>
               <div className="form-group">
-                <label>Identificador único (Key)</label>
+                <label>Identificador Ãºnico (Key)</label>
                 <input
                   type="text"
                   placeholder="Ej: DEVOPS"
@@ -695,15 +718,15 @@ export default function App() {
                   onChange={(e) => setNewSpaceKey(e.target.value)}
                   required
                   pattern="^[A-Z0-9]+$"
-                  title="Solo letras mayúsculas y números"
+                  title="Solo letras mayÃºsculas y nÃºmeros"
                 />
-                <span className="input-helper">Ej: DEVOPS (solo mayúsculas y números)</span>
+                <span className="input-helper">Ej: DEVOPS (solo mayÃºsculas y nÃºmeros)</span>
               </div>
               <div className="form-group">
-                <label>Descripción</label>
+                <label>DescripciÃ³n</label>
                 <textarea
                   rows={3}
-                  placeholder="Describe el propósito de este espacio..."
+                  placeholder="Describe el propÃ³sito de este espacio..."
                   value={newSpaceDesc}
                   onChange={(e) => setNewSpaceDesc(e.target.value)}
                   required
@@ -722,7 +745,7 @@ export default function App() {
                   </label>
                 </div>
                 <p className="text-small text-muted" style={{ fontSize: "12px", marginTop: "4px", color: "var(--color-text-muted)" }}>
-                  Si se activa, solo tú, los administradores y los usuarios autorizados de la lista podrán ver este espacio de trabajo y sus páginas.
+                  Si se activa, solo tÃº, los administradores y los usuarios autorizados de la lista podrÃ¡n ver este espacio de trabajo y sus pÃ¡ginas.
                 </p>
                 {newSpaceIsRestricted && (
                   <div className="form-group" style={{ marginTop: "12px" }}>

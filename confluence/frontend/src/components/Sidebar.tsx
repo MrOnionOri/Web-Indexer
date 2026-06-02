@@ -39,6 +39,7 @@ interface SidebarProps {
   onReadPage: (id: string) => void;
   hasCreate: boolean;
   onAddSpaceClick: () => void;
+  onCreatePageClick: () => void;
   onLogout: () => void;
   currentView: string;
 }
@@ -52,6 +53,7 @@ export default function Sidebar({
   onReadPage,
   hasCreate,
   onAddSpaceClick,
+  onCreatePageClick,
   onLogout,
   currentView
 }: SidebarProps) {
@@ -93,8 +95,8 @@ export default function Sidebar({
             <button
               className="btn-icon"
               disabled={!hasCreate}
-              onClick={onAddSpaceClick}
-              title="Crear Espacio"
+              onClick={activeSpace ? onCreatePageClick : onAddSpaceClick}
+              title={activeSpace ? "Crear tema" : "Crear espacio"}
             >
               <Plus size={16} />
             </button>
@@ -133,7 +135,7 @@ export default function Sidebar({
                       <button
                         key={`${page.id}-${index}`}
                         className="subtopic-nav-btn"
-                        onClick={() => onReadPage(page.id)}
+                        onClick={() => onReadPage(`${page.id}/subtopic/${index}`)}
                       >
                         <ListTree size={12} />
                         <span>{subtopic.title}</span>

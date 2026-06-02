@@ -1,6 +1,6 @@
-import React, { FormEvent, useEffect, useState, useMemo } from "react";
-import { Save } from "lucide-react";
-import MarkdownContent from "./MarkdownContent";
+﻿import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
+import MarkdownEditor, { EditorMode } from "./MarkdownEditor";
 import { parseSubtopics, serializeSubtopics, SubtopicItem } from "../subtopics";
 
 interface Space {
@@ -38,7 +38,6 @@ interface PageEditProps {
   allUsers: UserListItem[];
   onSubmit: (e: FormEvent) => void;
   onCancel: () => void;
-  insertMdTag: (tag: string) => void;
 }
 
 export default function PageEdit({
@@ -60,29 +59,20 @@ export default function PageEdit({
   spaces,
   allUsers,
   onSubmit,
-  onCancel,
-  insertMdTag
+  onCancel
 }: PageEditProps) {
   const [searchText, setSearchText] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [contentMode, setContentMode] = useState<"split" | "visual" | "markdown">("split");
-  const [pendingToolbarTag, setPendingToolbarTag] = useState<string | null>(null);
-  const subtopicItems = useMemo(() => parseSubtopics(editPageSubtopics), [editPageSubtopics]);
+  const [contentMode, setContentMode] = useState<EditorMode>("split");
+  const [subtopicMode, setSubtopicMode] = useState<EditorMode>("split");
+  const [subtopicItems, setSubtopicDrafts] = useState<SubtopicItem[]>(() => parseSubtopics(editPageSubtopics));
+  const [activeSubtopicIndex, setActiveSubtopicIndex] = useState(0);
 
   useEffect(() => {
-    if (!pendingToolbarTag || contentMode === "visual") return;
-    insertMdTag(pendingToolbarTag);
-    setPendingToolbarTag(null);
-  }, [contentMode, pendingToolbarTag, insertMdTag]);
-
-  const handleToolbarInsert = (tag: string) => {
-    if (contentMode === "visual") {
-      setPendingToolbarTag(tag);
-      setContentMode("split");
-      return;
-    }
-    insertMdTag(tag);
-  };
+    const parsed = parseSubtopics(editPageSubtopics);
+    setSubtopicDrafts(parsed);
+    setActiveSubtopicIndex(0);
+  }, [editPageId]);
 
   const handleAddEmail = (email: string) => {
     const emails = editPageAllowedEmails.split(",").map(em => em.trim()).filter(Boolean);
@@ -94,23 +84,37 @@ export default function PageEdit({
     setIsDropdownOpen(false);
   };
 
-  const setSubtopicItems = (items: SubtopicItem[]) => {
+  const setSubtopicItems = (items: SubtopicItem[], nextActiveIndex = activeSubtopicIndex) => {
+    setSubtopicDrafts(items);
+    setActiveSubtopicIndex(Math.max(0, Math.min(nextActiveIndex, Math.max(items.length - 1, 0))));
     setEditPageSubtopics(serializeSubtopics(items));
   };
 
-  const updateSubtopic = (index: number, patch: Partial<SubtopicItem>) => {
-    const nextItems = subtopicItems.map((item, currentIndex) =>
-      currentIndex === index ? { ...item, ...patch } : item
-    );
-    setSubtopicItems(nextItems);
+  const addSubtopic = () => {
+    const nextItems = [...subtopicItems, { title: "", content: "" }];
+    setSubtopicItems(nextItems, nextItems.length - 1);
   };
 
-  const addSubtopic = () => {
-    setSubtopicItems([...subtopicItems, { title: "", content: "" }]);
+  const updateSubtopic = (index: number, patch: Partial<SubtopicItem>) => {
+    setSubtopicItems(
+      subtopicItems.map((item, currentIndex) =>
+        currentIndex === index ? { ...item, ...patch } : item
+      ),
+      index
+    );
   };
 
   const removeSubtopic = (index: number) => {
-    setSubtopicItems(subtopicItems.filter((_, currentIndex) => currentIndex !== index));
+    const nextItems = subtopicItems.filter((_, currentIndex) => currentIndex !== index);
+    setSubtopicItems(nextItems, index > 0 ? index - 1 : 0);
+  };
+
+  const moveSubtopic = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= subtopicItems.length) return;
+    const nextItems = [...subtopicItems];
+    [nextItems[index], nextItems[nextIndex]] = [nextItems[nextIndex], nextItems[index]];
+    setSubtopicItems(nextItems, nextIndex);
   };
 
   const filteredUsers = useMemo(() => {
@@ -123,21 +127,21 @@ export default function PageEdit({
       u.email.toLowerCase().includes(q)
     );
   }, [allUsers, editPageAllowedEmails, searchText]);
-
+  const activeSubtopic = subtopicItems[activeSubtopicIndex];
   return (
     <div className="subview">
       <div className="edit-view-header">
-        <h1>{editPageId ? "Editar Página de Conocimiento" : "Crear Nueva Página"}</h1>
-        <p>Escribe tu contenido usando Markdown estructurado. Se guardará en la base de datos de MySQL.</p>
+        <h1>{editPageId ? "Editar PÃ¡gina de Conocimiento" : "Crear Nueva PÃ¡gina"}</h1>
+        <p>Crea o actualiza el contenido principal del tema dentro del workspace.</p>
       </div>
 
       <form onSubmit={onSubmit} className="edit-form-card">
         <div className="form-row">
           <div className="form-group flex-2">
-            <label>Título de la página</label>
+            <label>TÃ­tulo del tema</label>
             <input
               type="text"
-              placeholder="Ej: Documentación de APIs de Autenticación"
+              placeholder="Ej: Server API"
               value={editPageTitle}
               onChange={(e) => setEditPageTitle(e.target.value)}
               required
@@ -158,156 +162,87 @@ export default function PageEdit({
           </div>
         </div>
 
+
         <div className="form-group">
-          <div className="subtopics-header">
-            <label>Subtemas con información</label>
-            <button type="button" className="btn-secondary" onClick={addSubtopic}>Agregar subtema</button>
-          </div>
-          <div className="subtopics-editor-list">
-            {subtopicItems.length === 0 ? (
-              <div className="subtopics-empty">
-                Crea subtemas para que aparezcan en el hub y tengan contenido propio.
-              </div>
-            ) : (
-              subtopicItems.map((subtopic, index) => (
-                <div key={index} className="subtopic-editor-card">
-                  <div className="subtopic-editor-row">
-                    <input
-                      type="text"
-                      placeholder="Título del subtema"
-                      value={subtopic.title}
-                      onChange={(e) => updateSubtopic(index, { title: e.target.value })}
-                    />
-                    <button type="button" className="btn-secondary" onClick={() => removeSubtopic(index)}>Quitar</button>
-                  </div>
-                  <textarea
-                    rows={4}
-                    placeholder="Información del subtema. Puedes usar Markdown."
-                    value={subtopic.content}
-                    onChange={(e) => updateSubtopic(index, { content: e.target.value })}
-                  />
-                </div>
-              ))
-            )}
-          </div>
-          <span className="input-helper">Estos subtemas son independientes del contenido principal. El hub no leerá mensajes ni encabezados automáticamente.</span>
+          <label>Contenido principal del tema</label>
+          <MarkdownEditor
+            value={editPageContent}
+            onChange={setEditPageContent}
+            mode={contentMode}
+            onModeChange={setContentMode}
+            textareaId="edit-page-content-input"
+            rows={15}
+            placeholder="Escribe aqui en formato Markdown..."
+            required
+            emptyTitle="Empieza tu pagina"
+            emptyMessage="Escribe en Markdown y veras el resultado aqui en tiempo real."
+          />
         </div>
 
-        <div className="form-group">
-          <label>Contenido</label>
-          <div className="editor-container">
-            <div className="editor-toolbar">
-              <div className="editor-mode-toggle" role="tablist" aria-label="Modo de edición">
-                <button
-                  type="button"
-                  className={`editor-mode-btn ${contentMode === "split" ? "active" : ""}`}
-                  onClick={() => setContentMode("split")}
-                >
-                  Visual + Markdown
-                </button>
-                <button
-                  type="button"
-                  className={`editor-mode-btn ${contentMode === "visual" ? "active" : ""}`}
-                  onClick={() => setContentMode("visual")}
-                >
-                  Visual
-                </button>
-                <button
-                  type="button"
-                  className={`editor-mode-btn ${contentMode === "markdown" ? "active" : ""}`}
-                  onClick={() => setContentMode("markdown")}
-                >
-                  Markdown
-                </button>
-              </div>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("h1")}>H1</button>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("h2")}>H2</button>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("bold")}>B</button>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("italic")}>I</button>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("code")}>Code</button>
-              <button type="button" className="toolbar-btn" onClick={() => handleToolbarInsert("list")}>List</button>
-              <select
-                className="toolbar-select"
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val) {
-                    handleToolbarInsert(`code-block:${val}`);
-                    e.target.value = "";
-                  }
-                }}
-                defaultValue=""
-              >
-                <option value="" disabled>Bloque de código...</option>
-                <option value="python">Python</option>
-                <option value="javascript">JavaScript</option>
-                <option value="typescript">TypeScript</option>
-                <option value="html">HTML</option>
-                <option value="css">CSS</option>
-                <option value="sql">SQL</option>
-                <option value="bash">Bash / Shell</option>
-                <option value="json">JSON</option>
-                <option value="rust">Rust</option>
-                <option value="go">Go</option>
-              </select>
+        <div className="form-group subtopic-manager">
+          <div className="subtopic-manager-header">
+            <div>
+              <label>Subtemas</label>
+              <p className="input-helper">Crea subtemas del tema principal y ordenalos como indice de contenido.</p>
             </div>
-            <div className="editor-body">
-              {contentMode === "split" && (
-                <div className="editor-split">
-                  <div className="editor-pane editor-source-pane">
-                    <div className="editor-pane-header">Markdown</div>
-                    <textarea
-                      id="edit-page-content-input"
-                      rows={15}
-                      placeholder="Escribe aquí en formato Markdown..."
-                      value={editPageContent}
-                      onChange={(e) => setEditPageContent(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="editor-pane editor-preview-pane">
-                    <div className="editor-pane-header">Visual</div>
-                    <div className="page-content editor-visual-content">
-                      {editPageContent.trim() ? (
-                        <MarkdownContent content={editPageContent} />
-                      ) : (
-                        <div className="editor-empty-state">
-                          <h3>Empieza tu página</h3>
-                          <p>Escribe en Markdown y verás el resultado aquí en tiempo real.</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {contentMode === "visual" && (
-                <div className="page-content editor-visual-content">
-                  {editPageContent.trim() ? (
-                    <MarkdownContent content={editPageContent} />
-                  ) : (
-                    <div className="editor-empty-state">
-                      <h3>Empieza tu página</h3>
-                      <p>Cambia a Markdown o Visual + Markdown para escribir el contenido.</p>
-                      <button type="button" className="btn-secondary" onClick={() => setContentMode("split")}>
-                        Escribir contenido
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {contentMode === "markdown" && (
-                <textarea
-                  id="edit-page-content-input"
-                  rows={15}
-                  placeholder="Escribe aquí en formato Markdown..."
-                  value={editPageContent}
-                  onChange={(e) => setEditPageContent(e.target.value)}
-                  required
-                />
-              )}
-            </div>
+            <button type="button" className="btn-secondary" onClick={addSubtopic}>
+              <Plus size={14} />
+              <span>Agregar subtema</span>
+            </button>
           </div>
+
+          {subtopicItems.length > 0 ? (
+            <div className="subtopic-overview-list">
+              {subtopicItems.map((subtopic, index) => (
+                <div key={index} className={`subtopic-overview-item ${activeSubtopicIndex === index ? "active" : ""}`}>
+                  <button type="button" className="subtopic-overview-main" onClick={() => setActiveSubtopicIndex(index)}>
+                    <span className="subtopic-order">{index + 1}</span>
+                    <span>{subtopic.title || `Subtema ${index + 1}`}</span>
+                  </button>
+                  <div className="subtopic-overview-actions">
+                    <button type="button" className="btn-icon subtle" onClick={() => moveSubtopic(index, -1)} disabled={index === 0} title="Subir">
+                      <ArrowUp size={14} />
+                    </button>
+                    <button type="button" className="btn-icon subtle" onClick={() => moveSubtopic(index, 1)} disabled={index === subtopicItems.length - 1} title="Bajar">
+                      <ArrowDown size={14} />
+                    </button>
+                    <button type="button" className="btn-icon danger" onClick={() => removeSubtopic(index)} title="Eliminar subtema">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="subtopics-empty">Este tema todavia no tiene subtemas.</div>
+          )}
+
+          {activeSubtopic && (
+            <div className="subtopic-detail-editor">
+              <div className="form-group">
+                <label>Titulo del subtema</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Configuracion"
+                  value={activeSubtopic.title}
+                  onChange={(e) => updateSubtopic(activeSubtopicIndex, { title: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Contenido del subtema</label>
+                <MarkdownEditor
+                  value={activeSubtopic.content}
+                  onChange={(content) => updateSubtopic(activeSubtopicIndex, { content })}
+                  mode={subtopicMode}
+                  onModeChange={setSubtopicMode}
+                  rows={10}
+                  placeholder="Escribe el contenido del subtema en Markdown..."
+                  emptyTitle="Subtema vacio"
+                  emptyMessage="Escribe en Markdown y veras el resultado aqui en tiempo real."
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="restriction-section">
@@ -319,9 +254,9 @@ export default function PageEdit({
                 checked={editPageIsRestricted}
                 onChange={(e) => setEditPageIsRestricted(e.target.checked)}
               />
-              <label htmlFor="restrict-visibility-checkbox"><strong>Restringir acceso a esta página</strong></label>
+              <label htmlFor="restrict-visibility-checkbox"><strong>Restringir acceso a esta pÃ¡gina</strong></label>
             </div>
-            <p className="text-small text-muted">Si se activa, solo tú (el creador), los administradores de GateWiki y los usuarios autorizados de la lista podrán ver esta página.</p>
+            <p className="text-small text-muted">Si se activa, solo tÃº (el creador), los administradores de GateWiki y los usuarios autorizados de la lista podrÃ¡n ver esta pÃ¡gina.</p>
           </div>
           {editPageIsRestricted && (
             <div className="form-group" style={{ marginTop: "12px" }}>
@@ -437,9 +372,9 @@ export default function PageEdit({
                 checked={editPageCommentsAllowed}
                 onChange={(e) => setEditPageCommentsAllowed(e.target.checked)}
               />
-              <label htmlFor="allow-comments-checkbox"><strong>Permitir comentarios en esta página</strong></label>
+              <label htmlFor="allow-comments-checkbox"><strong>Permitir comentarios en esta pÃ¡gina</strong></label>
             </div>
-            <p className="text-small text-muted">Si se activa, todos los usuarios con acceso a esta página podrán ver y escribir comentarios.</p>
+            <p className="text-small text-muted">Si se activa, todos los usuarios con acceso a esta pÃ¡gina podrÃ¡n ver y escribir comentarios.</p>
           </div>
         </div>
 
@@ -449,10 +384,14 @@ export default function PageEdit({
           </button>
           <button type="submit" className="btn-primary">
             <Save size={16} />
-            <span>Guardar Página</span>
+            <span>Guardar PÃ¡gina</span>
           </button>
         </div>
       </form>
     </div>
   );
 }
+
+
+
+

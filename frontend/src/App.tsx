@@ -4,40 +4,46 @@ import {
   KeyRound,
   Layers3,
   LogOut,
-  BookOpenText,
   ShieldCheck,
   ShieldX,
+  SlidersHorizontal,
   UploadCloud,
-  Users,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, KnowledgePage, KnowledgeSpace, Me, ProjectUpload, RegisteredApp, Template, User } from "./api";
+import { api, Me, PortalHomeSettings, ProjectUpload, RegisteredApp, Template, User } from "./api";
 import { Metric, NavButton } from "./components/ui";
 import { AppsView } from "./views/AppsView";
 import { DashboardView } from "./views/DashboardView";
+import { HomeAdminView } from "./views/HomeAdminView";
 import { IntegrationView } from "./views/IntegrationView";
-import { KnowledgeView } from "./views/KnowledgeView";
 import { PasswordResetView } from "./views/PasswordResetView";
 import { ProjectsView } from "./views/ProjectsView";
 import { SecurityView } from "./views/SecurityView";
 import { UserViewMode, UsersView } from "./views/UsersView";
 
-type View = "dashboard" | "users" | "apps" | "projects" | "knowledge" | "security" | "integration";
+type View = "dashboard" | "apps" | "users" | "admin-apps" | "admin-home" | "projects" | "security" | "integration";
 
 function routeState(pathname: string): { view: View; userViewMode: UserViewMode } {
-  if (pathname.startsWith("/users/accounts")) return { view: "users", userViewMode: "crud" };
-  if (pathname.startsWith("/users")) return { view: "users", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/users/accounts")) return { view: "users", userViewMode: "crud" };
+  if (pathname.startsWith("/admin/users")) return { view: "users", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/apps")) return { view: "admin-apps", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/home")) return { view: "admin-home", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/projects")) return { view: "projects", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/security")) return { view: "security", userViewMode: "permissions" };
+  if (pathname.startsWith("/admin/integration")) return { view: "integration", userViewMode: "permissions" };
   if (pathname.startsWith("/apps")) return { view: "apps", userViewMode: "permissions" };
-  if (pathname.startsWith("/projects")) return { view: "projects", userViewMode: "permissions" };
-  if (pathname.startsWith("/knowledge")) return { view: "knowledge", userViewMode: "permissions" };
-  if (pathname.startsWith("/security")) return { view: "security", userViewMode: "permissions" };
-  if (pathname.startsWith("/integration")) return { view: "integration", userViewMode: "permissions" };
   return { view: "dashboard", userViewMode: "permissions" };
 }
 
 function routePath(view: View, userViewMode: UserViewMode = "permissions") {
   if (view === "dashboard") return "/dashboard";
-  if (view === "users") return userViewMode === "crud" ? "/users/accounts" : "/users/permissions";
+  if (view === "apps") return "/apps";
+  if (view === "users") return userViewMode === "crud" ? "/admin/users/accounts" : "/admin/users/permissions";
+  if (view === "admin-apps") return "/admin/apps";
+  if (view === "admin-home") return "/admin/home";
+  if (view === "projects") return "/admin/projects";
+  if (view === "security") return "/admin/security";
+  if (view === "integration") return "/admin/integration";
   return `/${view}`;
 }
 
@@ -46,9 +52,8 @@ export function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [apps, setApps] = useState<RegisteredApp[]>([]);
+  const [homeSettings, setHomeSettings] = useState<PortalHomeSettings | null>(null);
   const [projects, setProjects] = useState<ProjectUpload[]>([]);
-  const [knowledgeSpaces, setKnowledgeSpaces] = useState<KnowledgeSpace[]>([]);
-  const [knowledgePages, setKnowledgePages] = useState<KnowledgePage[]>([]);
   const [allPermissions, setAllPermissions] = useState<{ id: string; code: string; description: string }[]>([]);
   const initialRoute = routeState(window.location.pathname);
   const [view, setView] = useState<View>(initialRoute.view);
@@ -59,10 +64,20 @@ export function App() {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
   const [isMaintenance, setIsMaintenance] = useState(false);
   const [refreshCount, setRefreshCount] = useState(0);
 
   const can = useMemo(() => new Set(me?.permissions ?? []), [me]);
+  const adminViews: View[] = ["users", "admin-apps", "admin-home", "projects", "security", "integration"];
+  const adminToolsActive = adminViews.includes(view);
+  const canUseAdminTools =
+    can.has("users:view") ||
+    can.has("apps:manage") ||
+    can.has("portal:manage") ||
+    can.has("projects:review") ||
+    can.has("templates:view") ||
+    can.has("users:permissions");
 
   function navigate(nextView: View, nextUserViewMode: UserViewMode = "permissions") {
     window.history.pushState({}, "", routePath(nextView, nextUserViewMode));
@@ -77,6 +92,12 @@ export function App() {
   };
 
   useEffect(() => {
+    const splashStartedAt = Date.now();
+    const finishAuthCheck = () => {
+      const elapsed = Date.now() - splashStartedAt;
+      const remaining = Math.max(0, 1500 - elapsed);
+      window.setTimeout(() => setAuthChecking(false), remaining);
+    };
     const tokenFromUrl = new URLSearchParams(window.location.search).get("reset_token");
     if (tokenFromUrl) {
       setResetToken(tokenFromUrl);
@@ -89,6 +110,10 @@ export function App() {
         localStorage.setItem("gatestack_token", token);
       }
     }
+    if (!token) {
+      finishAuthCheck();
+      return;
+    }
     if (token) {
       api.me()
         .then(setMe)
@@ -96,7 +121,9 @@ export function App() {
           checkMaintenance(err);
           localStorage.removeItem("gatestack_token");
           document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
-        });
+          setAuthChecking(false);
+        })
+        .then(finishAuthCheck);
     }
   }, []);
 
@@ -130,28 +157,21 @@ export function App() {
           setLoadError(String(err));
         });
     }
-    if (can.has("apps:view")) {
-      api.apps()
-        .then(setApps)
-        .catch((err) => {
-          checkMaintenance(err);
-          setLoadError(String(err));
-        });
-    }
+    api.apps()
+      .then(setApps)
+      .catch((err) => {
+        checkMaintenance(err);
+        setLoadError(String(err));
+      });
+    api.homeSettings()
+      .then(setHomeSettings)
+      .catch((err) => {
+        checkMaintenance(err);
+        setLoadError(String(err));
+      });
     if (can.has("projects:review")) {
       api.projects()
         .then(setProjects)
-        .catch((err) => {
-          checkMaintenance(err);
-          setLoadError(String(err));
-        });
-    }
-    if (can.has("knowledge:view")) {
-      Promise.all([api.knowledgeSpaces(), api.knowledgePages()])
-        .then(([spaces, pages]) => {
-          setKnowledgeSpaces(spaces);
-          setKnowledgePages(pages);
-        })
         .catch((err) => {
           checkMaintenance(err);
           setLoadError(String(err));
@@ -244,6 +264,10 @@ export function App() {
     );
   }
 
+  if (authChecking) {
+    return <GateStackSplash />;
+  }
+
   if (!me) {
     if (resetToken) {
       return <PasswordResetView token={resetToken} done={resetDone} onDone={() => setResetDone(true)} onBack={() => setResetToken("")} />;
@@ -290,44 +314,65 @@ export function App() {
           <ShieldCheck />
           <strong>GateStack</strong>
         </div>
+        <div className="nav-section-label">Portal</div>
         <NavButton icon={<Database />} active={view === "dashboard"} onClick={() => navigate("dashboard")} label="Dashboard" />
-        {can.has("users:view") && (
-          <div className="nav-group">
-            <NavButton
-              icon={<Users />}
-              active={view === "users"}
-              onClick={() => navigate("users", "permissions")}
-              label="Usuarios"
-            />
-            {view === "users" && (
-              <div className="subnav">
-                <button
-                  className={`subnav-item ${userViewMode === "permissions" ? "active" : ""}`}
-                  onClick={() => navigate("users", "permissions")}
-                >
-                  Permisos y templates
+        <NavButton icon={<AppWindow />} active={view === "apps"} onClick={() => navigate("apps")} label="Apps" />
+        {canUseAdminTools && (
+          <div className="nav-category">
+            <div className={`nav-category-title ${adminToolsActive ? "active" : ""}`}>
+              <SlidersHorizontal />
+              <span>Admin tools</span>
+            </div>
+            <div className="subnav expanded">
+              {can.has("users:view") && (
+                <>
+                  <button className={`subnav-item ${view === "users" ? "active" : ""}`} onClick={() => navigate("users", "permissions")}>
+                    Usuarios
+                  </button>
+                  {view === "users" && (
+                    <div className="subnav-nested">
+                      <button
+                        className={`subnav-item ${userViewMode === "permissions" ? "active" : ""}`}
+                        onClick={() => navigate("users", "permissions")}
+                      >
+                        Permisos y templates
+                      </button>
+                      <button
+                        className={`subnav-item ${userViewMode === "crud" ? "active" : ""}`}
+                        onClick={() => navigate("users", "crud")}
+                      >
+                        Cuentas
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+              {can.has("apps:manage") && (
+                <button className={`subnav-item ${view === "admin-apps" ? "active" : ""}`} onClick={() => navigate("admin-apps")}>
+                  Aplicaciones
                 </button>
-                <button
-                  className={`subnav-item ${userViewMode === "crud" ? "active" : ""}`}
-                  onClick={() => navigate("users", "crud")}
-                >
-                  Cuentas
+              )}
+              {can.has("portal:manage") && (
+                <button className={`subnav-item ${view === "admin-home" ? "active" : ""}`} onClick={() => navigate("admin-home")}>
+                  Home
                 </button>
-              </div>
-            )}
+              )}
+              {can.has("projects:review") && (
+                <button className={`subnav-item ${view === "projects" ? "active" : ""}`} onClick={() => navigate("projects")}>
+                  Proyectos
+                </button>
+              )}
+              {can.has("templates:view") && (
+                <button className={`subnav-item ${view === "security" ? "active" : ""}`} onClick={() => navigate("security")}>
+                  Seguridad
+                </button>
+              )}
+              <button className={`subnav-item ${view === "integration" ? "active" : ""}`} onClick={() => navigate("integration")}>
+                Integracion API
+              </button>
+            </div>
           </div>
         )}
-        {can.has("apps:view") && <NavButton icon={<AppWindow />} active={view === "apps"} onClick={() => navigate("apps")} label="Apps" />}
-        {can.has("projects:review") && (
-          <NavButton icon={<UploadCloud />} active={view === "projects"} onClick={() => navigate("projects")} label="Proyectos" />
-        )}
-        {/* {can.has("knowledge:view") && (
-          // <NavButton icon={<BookOpenText />} active={view === "knowledge"} onClick={() => navigate("knowledge")} label="Wiki" />
-        )} */}
-        {can.has("templates:view") && (
-          <NavButton icon={<ShieldCheck />} active={view === "security"} onClick={() => navigate("security")} label="Seguridad" />
-        )}
-        <NavButton icon={<KeyRound />} active={view === "integration"} onClick={() => navigate("integration")} label="Integración API" />
         
         <button className="nav logout" onClick={logout}>
           <LogOut />
@@ -338,7 +383,7 @@ export function App() {
       <section className="content">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Portal principal</span>
+            <span className="eyebrow">{adminToolsActive ? "Admin tools" : "Portal principal"}</span>
             <h2>{viewTitle(view)}</h2>
           </div>
           <div className="user-pill">
@@ -347,7 +392,15 @@ export function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <DashboardView users={users} apps={apps} projects={projects} permissions={me.permissions} />}
+        {view === "dashboard" && (
+          <DashboardView
+            users={users}
+            apps={apps}
+            projects={projects}
+            permissions={me.permissions}
+            homeSettings={homeSettings}
+          />
+        )}
         {loadError && <p className="load-error">{loadError}</p>}
         {view === "users" && (
           <UsersView
@@ -359,18 +412,39 @@ export function App() {
             refresh={() => setRefreshCount((c) => c + 1)}
           />
         )}
-        {view === "apps" && <AppsView apps={apps} />}
-        {view === "projects" && <ProjectsView projects={projects} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} />}
-        {view === "knowledge" && (
-          <KnowledgeView
-            spaces={knowledgeSpaces}
-            pages={knowledgePages}
-            permissions={me.permissions}
-            refresh={() => setRefreshCount((c) => c + 1)}
+        {view === "apps" && <AppsView apps={apps} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} />}
+        {view === "admin-apps" && (
+          <AppsView apps={apps} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} mode="admin" />
+        )}
+        {view === "admin-home" && (
+          <HomeAdminView
+            settings={homeSettings}
+            refresh={() => api.homeSettings().then(setHomeSettings).catch((err) => setLoadError(String(err)))}
           />
         )}
+        {view === "projects" && <ProjectsView projects={projects} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} />}
         {view === "security" && <SecurityView templates={templates} permissions={me.permissions} />}
         {view === "integration" && <IntegrationView />}
+      </section>
+    </main>
+  );
+}
+
+function GateStackSplash() {
+  return (
+    <main className="splash-shell">
+      <section className="splash-panel">
+        <div className="splash-mark">
+          <ShieldCheck />
+        </div>
+        <div>
+          <span className="eyebrow">GateStack</span>
+          <h1>Preparando tu sesion</h1>
+          <p>Validando credenciales y cargando el portal.</p>
+        </div>
+        <div className="splash-loader" aria-label="Cargando">
+          <span />
+        </div>
       </section>
     </main>
   );
@@ -379,12 +453,13 @@ export function App() {
 function viewTitle(view: View) {
   const titles: Record<View, string> = {
     dashboard: "Dashboard",
-    users: "Gestión de usuarios",
     apps: "Aplicaciones",
-    projects: "Revisión de proyectos",
-    knowledge: "Wiki de conocimiento",
+    users: "Gestion de usuarios",
+    "admin-apps": "Admin de aplicaciones",
+    "admin-home": "Personalizar home",
+    projects: "Revision de proyectos",
     security: "Permisos y templates",
-    integration: "Integración API",
+    integration: "Integracion API",
   };
   return titles[view];
 }

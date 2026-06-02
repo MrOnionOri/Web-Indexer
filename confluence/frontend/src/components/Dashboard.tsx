@@ -1,6 +1,5 @@
-import React from "react";
-import { Sparkles, FileText, Folder, Lock, Globe, Trash2, ArrowRight, ListTree, Settings } from "lucide-react";
-import { parseSubtopics } from "../subtopics";
+import React, { useState } from "react";
+import { Sparkles, FileText, Folder, Lock, Globe, Trash2, ArrowRight, ListTree, Settings, MoreHorizontal, Edit3, SlidersHorizontal } from "lucide-react";
 
 interface UserProfile {
   id: string;
@@ -32,6 +31,7 @@ interface Page {
   created_by_id: string;
   is_restricted: boolean;
   allowed_emails: string;
+  comments_allowed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +46,9 @@ interface DashboardProps {
   onOpenSpace: (key: string) => void;
   onDeletePage: (id: string) => void;
   hasDelete: boolean;
+  hasAdmin: boolean;
+  onEditPage: (id: string) => void;
+  onManageTopicOrder: (spaceKey: string) => void;
   onEditSpace: (space: Space) => void;
 }
 
@@ -59,9 +62,13 @@ export default function Dashboard({
   onOpenSpace,
   onDeletePage,
   hasDelete,
+  hasAdmin,
+  onEditPage,
+  onManageTopicOrder,
   onEditSpace
 }: DashboardProps) {
   const perms = new Set(currentUser.permissions || []);
+  const [openMenuPageId, setOpenMenuPageId] = useState<string | null>(null);
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -80,6 +87,7 @@ export default function Dashboard({
   }, {} as Record<string, number>);
 
   const activeSpace = spaces.find(s => s.key === activeSpaceFilter);
+  const canManageWorkspaceTopics = hasAdmin && !!activeSpaceFilter;
 
   return (
     <div className="subview">
@@ -203,7 +211,7 @@ export default function Dashboard({
       <div className="dashboard-grid">
         <div className="card grid-main">
           <div className="card-header">
-            <h2>Temas {activeSpaceFilter ? `en [${activeSpaceFilter}]` : ""}</h2>
+            <h2>Temas principales {activeSpaceFilter ? `en [${activeSpaceFilter}]` : ""}</h2>
           </div>
           <div className="topics-index-list">
             {filteredPages.length === 0 ? (
@@ -212,9 +220,7 @@ export default function Dashboard({
                 <p className="text-muted">No hay temas que coincidan con la búsqueda.</p>
               </div>
             ) : (
-              filteredPages.map(p => {
-                const subtopics = parseSubtopics(p.subtopics).slice(0, 4);
-                return (
+              filteredPages.map((p) => (
                   <article key={p.id} className="topic-index-card">
                     <div className="topic-index-header">
                       <button className="topic-index-title" onClick={() => onReadPage(p.id)}>
@@ -222,6 +228,30 @@ export default function Dashboard({
                         <span>{p.title}</span>
                       </button>
                       <div className="topic-index-actions">
+                        {canManageWorkspaceTopics && (
+                          <div className="topic-card-menu">
+                            <button
+                              type="button"
+                              className="btn-table-action"
+                              onClick={() => setOpenMenuPageId(openMenuPageId === p.id ? null : p.id)}
+                              title="Opciones del tema"
+                            >
+                              <MoreHorizontal size={15} />
+                            </button>
+                            {openMenuPageId === p.id && (
+                              <div className="topic-card-menu-popover">
+                                <button type="button" onClick={() => onEditPage(p.id)}>
+                                  <Edit3 size={14} />
+                                  <span>Editar tema</span>
+                                </button>
+                                <button type="button" onClick={() => activeSpaceFilter && onManageTopicOrder(activeSpaceFilter)}>
+                                  <SlidersHorizontal size={14} />
+                                  <span>Ordenar temas</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {p.is_restricted ? (
                           <span className="badge-privacy restricted"><Lock size={12} /> Privado</span>
                         ) : (
@@ -238,20 +268,8 @@ export default function Dashboard({
                       <span>{p.created_by_name}</span>
                       <span>{formatDate(p.created_at)}</span>
                     </div>
-                    {subtopics.length > 0 && (
-                      <div className="subtopics-list">
-                        {subtopics.map((subtopic, index) => (
-                          <button key={`${p.id}-${index}`} type="button" onClick={() => onReadPage(p.id)} className="subtopic-link">
-                            <ListTree size={13} />
-                            <span>{subtopic.title}</span>
-                            {subtopic.content && <small>{subtopic.content.replace(/[#*_`]/g, "").slice(0, 90)}</small>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </article>
-                );
-              })
+                ))
             )}
           </div>
         </div>

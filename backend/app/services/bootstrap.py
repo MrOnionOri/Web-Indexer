@@ -13,15 +13,11 @@ BASE_PERMISSIONS = {
     "templates:manage": "Create and update permission templates",
     "apps:view": "View registered applications",
     "apps:manage": "Create and update application registry entries",
+    "portal:manage": "Customize the user home page",
     "projects:upload": "Upload project archives for review",
     "projects:review": "Review uploaded project metadata",
     "projects:deploy": "Approve projects for deployment",
     "audit:view": "View security audit logs",
-    "knowledge:view": "View knowledge spaces and pages",
-    "knowledge:create": "Create knowledge spaces and wiki pages",
-    "knowledge:edit": "Edit existing wiki pages",
-    "knowledge:publish": "Publish or archive wiki pages",
-    "knowledge:admin": "Administer the knowledge base",
     "gatewiki:view": "View GateWiki spaces and pages",
     "gatewiki:create": "Create GateWiki spaces and pages (legacy)",
     "gatewiki:edit": "Edit GateWiki pages (legacy)",
@@ -37,9 +33,8 @@ BASE_PERMISSIONS = {
 
 TEMPLATES = {
     "Platform Admin Template": list(BASE_PERMISSIONS.keys()),
-    "App Manager Template": ["apps:view", "apps:manage", "projects:upload", "projects:review"],
-    "Knowledge Editor Template": ["knowledge:view", "knowledge:create", "knowledge:edit", "knowledge:publish"],
-    "Viewer Template": ["apps:view", "knowledge:view"],
+    "App Manager Template": ["apps:view", "apps:manage", "portal:manage", "projects:upload", "projects:review"],
+    "Viewer Template": ["apps:view", "gatewiki:view"],
     "GateWiki Admin Template": [
         "gatewiki:view",
         "gatewiki:create_workspace",
@@ -61,12 +56,16 @@ TEMPLATES = {
 def bootstrap(db: Session) -> None:
     settings = get_settings()
 
-    # Clean up legacy confluence permissions and templates
+    # Clean up legacy permissions/templates for apps that were renamed or removed.
     try:
         from app.models import PermissionTemplate, Permission, TemplatePermission, UserPermissionTemplate, UserPermissionOverride
         
         # 1. Obsolete permissions
-        obsolete_perms = db.scalars(select(Permission).where(Permission.code.like("confluence:%"))).all()
+        obsolete_perms = db.scalars(
+            select(Permission).where(
+                Permission.code.like("confluence:%") | Permission.code.like("knowledge:%")
+            )
+        ).all()
         if obsolete_perms:
             obsolete_perm_ids = [p.id for p in obsolete_perms]
             db.query(TemplatePermission).filter(TemplatePermission.permission_id.in_(obsolete_perm_ids)).delete(synchronize_session=False)
@@ -74,7 +73,11 @@ def bootstrap(db: Session) -> None:
             db.query(Permission).filter(Permission.id.in_(obsolete_perm_ids)).delete(synchronize_session=False)
             
         # 2. Obsolete templates
-        obsolete_templates = db.scalars(select(PermissionTemplate).where(PermissionTemplate.name.like("Confluence %"))).all()
+        obsolete_templates = db.scalars(
+            select(PermissionTemplate).where(
+                PermissionTemplate.name.like("Confluence %") | (PermissionTemplate.name == "Knowledge Editor Template")
+            )
+        ).all()
         if obsolete_templates:
             obsolete_template_ids = [t.id for t in obsolete_templates]
             db.query(TemplatePermission).filter(TemplatePermission.template_id.in_(obsolete_template_ids)).delete(synchronize_session=False)
@@ -82,9 +85,9 @@ def bootstrap(db: Session) -> None:
             db.query(PermissionTemplate).filter(PermissionTemplate.id.in_(obsolete_template_ids)).delete(synchronize_session=False)
             
         db.flush()
-        print("Obsolete confluence permissions and templates successfully cleaned up.")
+        print("Obsolete legacy permissions and templates successfully cleaned up.")
     except Exception as e:
-        print("Obsolete confluence cleanup skipped or failed:", e)
+        print("Obsolete legacy cleanup skipped or failed:", e)
 
     permission_by_code: dict[str, Permission] = {}
 

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, text, ForeignKey
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, text, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ----------------- CONFIGURACIÓN & DB (MySQL) -----------------
@@ -71,6 +71,7 @@ class PageModel(Base):
     title = Column(String(180), nullable=False)
     content = Column(Text, default="")
     subtopics = Column(Text, default="", nullable=True)
+    sort_order = Column(Integer, default=0, nullable=False)
     created_by_email = Column(String(255), nullable=False)
     created_by_name = Column(String(160), nullable=False)
     created_by_id = Column(String(36), nullable=False)
@@ -128,6 +129,8 @@ def init_db_for_local_dev() -> None:
                 conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN comments_allowed BOOLEAN DEFAULT TRUE NULL"))
             if "subtopics" not in existing_p_cols:
                 conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN subtopics TEXT NULL"))
+            if "sort_order" not in existing_p_cols:
+                conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN sort_order INT NOT NULL DEFAULT 0"))
                 
             c_result = conn.execute(text("SHOW COLUMNS FROM confluence_comments"))
             existing_c_cols = {row[0] for row in c_result.fetchall()}
@@ -181,6 +184,7 @@ class PageRead(BaseModel):
     title: str
     content: str
     subtopics: Optional[str] = ""
+    sort_order: int = 0
     created_by_email: str
     created_by_name: str
     created_by_id: str
@@ -191,6 +195,11 @@ class PageRead(BaseModel):
     updated_at: datetime
     class Config:
         from_attributes = True
+
+
+class PageReorderRequest(BaseModel):
+    space_key: str
+    page_ids: List[str]
 
 
 class CommentReactionRead(BaseModel):
@@ -508,7 +517,7 @@ def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), us
     else:
         query = query.filter(PageModel.space_key.in_(list(visible_space_keys)))
         
-    pages = query.order_by(PageModel.created_at.desc()).all()
+    pages = query.order_by(PageModel.sort_order.asc(), PageModel.created_at.desc()).all()
     
     # 3. Filtrar a nivel de página (páginas restringidas individualmente)
     visible_pages = []
@@ -567,11 +576,13 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
         if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
             raise HTTPException(status_code=403, detail="No puedes crear páginas en un espacio de trabajo restringido en el que no estás autorizado.")
             
+    next_sort_order = (db.query(PageModel).filter(PageModel.space_key == page.space_key.upper()).count() + 1) * 10
     db_page = PageModel(
         space_key=page.space_key.upper(),
         title=page.title,
         content=page.content,
         subtopics=page.subtopics,
+        sort_order=next_sort_order,
         created_by_email=user.get("email"),
         created_by_name=user.get("full_name"),
         created_by_id=user.get("id"),
@@ -628,6 +639,25 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(page)
     return page
+
+@app.put("/api/page-order", response_model=List[PageRead])
+def reorder_pages(payload: PageReorderRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    permissions = user.get("permissions", [])
+    is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in permissions
+    if not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo administradores pueden reordenar temas.")
+
+    space_key = payload.space_key.upper()
+    pages = db.query(PageModel).filter(PageModel.space_key == space_key).all()
+    pages_by_id = {page.id: page for page in pages}
+
+    for index, page_id in enumerate(payload.page_ids):
+        page = pages_by_id.get(page_id)
+        if page:
+            page.sort_order = (index + 1) * 10
+
+    db.commit()
+    return db.query(PageModel).filter(PageModel.space_key == space_key).order_by(PageModel.sort_order.asc(), PageModel.created_at.desc()).all()
 
 @app.delete("/api/pages/{page_id}", status_code=204)
 def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):

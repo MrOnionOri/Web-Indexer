@@ -1055,6 +1055,42 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--color-primary-hover);
 }
 
+.topic-card-menu {
+    position: relative;
+}
+
+.topic-card-menu-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 170px;
+    padding: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-lg);
+    z-index: 20;
+}
+
+.topic-card-menu-popover button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--text-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    text-align: left;
+}
+
+.topic-card-menu-popover button:hover {
+    background: var(--bg-hover);
+}
+
 .page-subtopics-section {
     margin: 28px 0;
 }
@@ -1701,6 +1737,32 @@ h1, h2, h3, h4, h5, h6 {
     display: block;
 }
 
+.topic-title-tools {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.btn-topic-add-subtopic {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(64, 107, 255, 0.28);
+    background: rgba(64, 107, 255, 0.08);
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-topic-add-subtopic:hover {
+    background: rgba(64, 107, 255, 0.14);
+    border-color: rgba(64, 107, 255, 0.42);
+}
+
 .subtopics-header {
     display: flex;
     align-items: center;
@@ -1723,11 +1785,134 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 13px;
 }
 
-.subtopic-editor-card {
+.subtopic-manager {
+    border-top: 1px solid var(--border-color);
+    padding-top: 24px;
+}
+
+.subtopic-manager-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.subtopic-overview-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 18px;
+}
+
+.subtopic-overview-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    padding: 14px;
     background: rgba(255, 255, 255, 0.015);
+    padding: 8px;
+}
+
+.subtopic-overview-item.active {
+    border-color: rgba(64, 107, 255, 0.4);
+    background: rgba(64, 107, 255, 0.06);
+}
+
+.subtopic-overview-main {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.subtopic-overview-main span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.subtopic-order {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: rgba(64, 107, 255, 0.1);
+    color: var(--color-primary);
+    font-size: 11px;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+.subtopic-overview-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.subtopic-detail-editor {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.012);
+}
+
+.subtopic-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 260px;
+}
+
+.subtopic-detail-grid textarea {
+    border: 0;
+    border-right: 1px solid var(--border-color);
+    border-radius: 0;
+    min-height: 260px;
+    resize: vertical;
+}
+
+.subtopic-detail-preview {
+    min-height: 260px;
+    padding: 18px;
+    background: var(--bg-input);
+}
+
+.subtopic-editor-card {
+    position: relative;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 14px 14px 48px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.subtopic-card-index {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: rgba(64, 107, 255, 0.1);
+    color: var(--color-primary);
+    font-size: 11px;
+    font-weight: 800;
 }
 
 .subtopic-editor-row {
@@ -1738,6 +1923,28 @@ h1, h2, h3, h4, h5, h6 {
 
 .subtopic-editor-row input {
     flex: 1;
+}
+
+.subtopic-sort-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-icon.subtle {
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+}
+
+.btn-icon.subtle:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+}
+
+.btn-icon.danger {
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    background: rgba(239, 68, 68, 0.08);
+    color: #ef4444;
 }
 
 .subtopic-editor-card textarea {
@@ -1752,6 +1959,65 @@ h1, h2, h3, h4, h5, h6 {
     border-top: 1px solid var(--border-color);
     padding-top: 28px;
     margin-top: 28px;
+}
+
+.topic-order-shell {
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    background: var(--bg-card);
+    padding: 24px;
+    box-shadow: var(--shadow-md);
+}
+
+.topic-order-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+}
+
+.topic-order-header h1 {
+    margin: 10px 0 4px;
+    font-size: 24px;
+}
+
+.topic-order-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.topic-order-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.016);
+}
+
+.topic-order-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-main);
+    font-weight: 700;
+}
+
+.topic-order-main span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.topic-order-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 /* 7. Modal Overlay (One UI Style) */

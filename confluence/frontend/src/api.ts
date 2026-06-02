@@ -23,6 +23,7 @@ export interface Page {
   title: string;
   content: string;
   subtopics?: string;
+  sort_order?: number;
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;
@@ -118,6 +119,12 @@ export const api = {
     }),
   deletePage: (token: string | null, pageId: string) =>
     request<void>(`/api/pages/${pageId}`, { method: "DELETE", token }),
+  reorderPages: (token: string | null, spaceKey: string, pageIds: string[]) =>
+    request<Page[]>("/api/page-order", {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ space_key: spaceKey, page_ids: pageIds })
+    }),
   comments: (token: string | null, pageId: string) =>
     request<Comment[]>(`/api/pages/${pageId}/comments`, { token }),
   addComment: (token: string | null, pageId: string, content: string, parentId?: string) =>

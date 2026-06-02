@@ -52,6 +52,41 @@ export interface RegisteredApp {
   slug: string;
   description: string;
   homepage_url: string | null;
+  logo_url: string | null;
+  required_permission_code: string | null;
+  has_access: boolean;
+  access_request_status: "pending" | "approved" | "rejected" | null;
+}
+
+export interface AppAccessRequest {
+  id: string;
+  app_id: string;
+  app_name: string;
+  app_slug: string;
+  user_id: string;
+  user_full_name: string;
+  user_email: string;
+  status: "pending" | "approved" | "rejected";
+  reason: string;
+  admin_notes: string;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
+export interface PermissionOption {
+  id: string;
+  code: string;
+  description: string;
+}
+
+export interface PortalHomeSettings {
+  id: string;
+  headline: string;
+  subheadline: string;
+  welcome_message: string;
+  hero_image_url: string | null;
+  announcement: string;
+  updated_at: string;
 }
 
 export interface ProjectUpload {
@@ -61,29 +96,6 @@ export interface ProjectUpload {
   detected_stack: string | null;
   review_notes: string | null;
   created_at: string;
-}
-
-export type WikiPageStatus = "draft" | "published" | "archived";
-
-export interface KnowledgeSpace {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface KnowledgePage {
-  id: string;
-  space_id: string;
-  title: string;
-  slug: string;
-  summary: string;
-  content: string;
-  status: WikiPageStatus;
-  created_at: string;
-  updated_at: string;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -122,40 +134,44 @@ export const api = {
   users: () => request<User[]>("/admin/users"),
   templates: () => request<Template[]>("/admin/templates"),
   apps: () => request<RegisteredApp[]>("/apps"),
-  projects: () => request<ProjectUpload[]>("/projects"),
-  knowledgeSpaces: () => request<KnowledgeSpace[]>("/knowledge/spaces"),
-  knowledgePages: (spaceId?: string, query?: string) => {
-    const params = new URLSearchParams();
-    if (spaceId) params.set("space_id", spaceId);
-    if (query) params.set("q", query);
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<KnowledgePage[]>(`/knowledge/pages${suffix}`);
-  },
-  createKnowledgeSpace: (name: string, slug: string, description: string) =>
-    request<KnowledgeSpace>("/knowledge/spaces", {
-      method: "POST",
-      body: JSON.stringify({ name, slug, description }),
-    }),
-  createKnowledgePage: (
-    spaceId: string,
-    title: string,
+  appPermissionOptions: () => request<PermissionOption[]>("/apps/permission-options"),
+  createApp: (
+    name: string,
     slug: string,
-    summary: string,
-    content: string,
-    status: WikiPageStatus,
+    description: string,
+    homepageUrl: string | null,
+    logoUrl: string | null,
+    requiredPermissionCode: string | null,
   ) =>
-    request<KnowledgePage>("/knowledge/pages", {
+    request<RegisteredApp>("/apps", {
       method: "POST",
-      body: JSON.stringify({ space_id: spaceId, title, slug, summary, content, status }),
+      body: JSON.stringify({
+        name,
+        slug,
+        description,
+        homepage_url: homepageUrl,
+        logo_url: logoUrl,
+        required_permission_code: requiredPermissionCode,
+      }),
     }),
-  updateKnowledgePage: (
-    pageId: string,
-    payload: Partial<Pick<KnowledgePage, "title" | "slug" | "summary" | "content" | "status">>,
-  ) =>
-    request<KnowledgePage>(`/knowledge/pages/${pageId}`, {
+  requestAppAccess: (appId: string, reason: string) =>
+    request<AppAccessRequest>(`/apps/${appId}/access-requests`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  appAccessRequests: () => request<AppAccessRequest[]>("/apps/access-requests"),
+  reviewAppAccessRequest: (requestId: string, status: "approved" | "rejected", adminNotes: string) =>
+    request<AppAccessRequest>(`/apps/access-requests/${requestId}`, {
       method: "PATCH",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ status, admin_notes: adminNotes }),
     }),
+  homeSettings: () => request<PortalHomeSettings>("/portal/home"),
+  updateHomeSettings: (settings: Omit<PortalHomeSettings, "id" | "updated_at">) =>
+    request<PortalHomeSettings>("/portal/home", {
+      method: "PATCH",
+      body: JSON.stringify(settings),
+    }),
+  projects: () => request<ProjectUpload[]>("/projects"),
   updateUserAccess: (userId: string, status: UserStatus, templateIds: string[], statusReason?: string | null) =>
     request<User>(`/admin/users/${userId}/approval`, {
       method: "PATCH",

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import OverrideEffect, ProjectStatus, UserStatus, WikiPageStatus
+from app.models import AppAccessRequestStatus, OverrideEffect, ProjectStatus, UserStatus
 
 
 class TokenResponse(BaseModel):
@@ -109,6 +109,8 @@ class AppCreateRequest(BaseModel):
     slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
     description: str = ""
     homepage_url: str | None = None
+    logo_url: str | None = None
+    required_permission_code: str = Field(min_length=3, max_length=120)
 
 
 class AppRead(BaseModel):
@@ -117,56 +119,56 @@ class AppRead(BaseModel):
     slug: str
     description: str
     homepage_url: str | None
+    logo_url: str | None
+    required_permission_code: str | None
+    has_access: bool = True
+    access_request_status: AppAccessRequestStatus | None = None
 
     model_config = {"from_attributes": True}
 
 
-class KnowledgeSpaceCreateRequest(BaseModel):
-    name: str = Field(min_length=2, max_length=140)
-    slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
-    description: str = ""
+class AppAccessRequestCreateRequest(BaseModel):
+    reason: str = Field(default="", max_length=1000)
 
 
-class KnowledgeSpaceRead(BaseModel):
+class AppAccessRequestReviewRequest(BaseModel):
+    status: AppAccessRequestStatus
+    admin_notes: str = Field(default="", max_length=1000)
+
+
+class AppAccessRequestRead(BaseModel):
     id: str
-    name: str
-    slug: str
-    description: str
+    app_id: str
+    app_name: str
+    app_slug: str
+    user_id: str
+    user_full_name: str
+    user_email: str
+    status: AppAccessRequestStatus
+    reason: str
+    admin_notes: str
     created_at: datetime
+    reviewed_at: datetime | None
+
+
+class PortalHomeSettingsRead(BaseModel):
+    id: str
+    headline: str
+    subheadline: str
+    welcome_message: str
+    hero_image_url: str | None
+    announcement: str
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
 
-class KnowledgePageCreateRequest(BaseModel):
-    space_id: str
-    title: str = Field(min_length=2, max_length=180)
-    slug: str = Field(min_length=2, max_length=120, pattern=r"^[a-z0-9-]+$")
-    summary: str = Field(default="", max_length=255)
-    content: str = ""
-    status: WikiPageStatus = WikiPageStatus.draft
-
-
-class KnowledgePageUpdateRequest(BaseModel):
-    title: str | None = Field(default=None, min_length=2, max_length=180)
-    slug: str | None = Field(default=None, min_length=2, max_length=120, pattern=r"^[a-z0-9-]+$")
-    summary: str | None = Field(default=None, max_length=255)
-    content: str | None = None
-    status: WikiPageStatus | None = None
-
-
-class KnowledgePageRead(BaseModel):
-    id: str
-    space_id: str
-    title: str
-    slug: str
-    summary: str
-    content: str
-    status: WikiPageStatus
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
+class PortalHomeSettingsUpdateRequest(BaseModel):
+    headline: str = Field(min_length=2, max_length=180)
+    subheadline: str = Field(min_length=2, max_length=255)
+    welcome_message: str = Field(min_length=2, max_length=1200)
+    hero_image_url: str | None = Field(default=None, max_length=500)
+    announcement: str = Field(default="", max_length=255)
 
 
 class ProjectRead(BaseModel):

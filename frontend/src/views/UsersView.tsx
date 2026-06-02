@@ -50,6 +50,7 @@ export function UsersView({
   });
 
   const approvedAdminCount = users.filter((user) => user.is_platform_admin && user.status === "approved").length;
+  const permissionGroups = groupPermissionsByApplication(allPermissions);
 
   function isProtectedAdminAction(user: User) {
     return user.id === me.id || (user.is_platform_admin && approvedAdminCount <= 1);
@@ -291,87 +292,98 @@ export function UsersView({
                   <p className="override-desc">Define reglas exclusivas que sobrescriban las asignaciones de las plantillas.</p>
                   
                   <div className="override-list">
-                    {allPermissions.map((perm) => {
-                      const isDefaultGranted = inheritedPermissions.has(perm.code);
-                      const override = user.overrides?.find((o) => o.permission_id === perm.id);
-                      const currentEffect = override ? override.effect : "default";
-
-                      const isAllowed = currentEffect === "allow" || (currentEffect === "default" && isDefaultGranted);
-                      const isDenied = currentEffect === "deny" || (currentEffect === "default" && !isDefaultGranted);
-
-                      const handleOverride = async (effect: "allow" | "deny" | "default") => {
-                        try {
-                          if (effect === "default") {
-                            await api.deletePermissionOverride(user.id, perm.id);
-                          } else {
-                            await api.setPermissionOverride(user.id, perm.id, effect);
-                          }
-                          refresh();
-                        } catch (err: any) {
-                          alert(err.message ?? "Error guardando override");
-                        }
-                      };
-
-                      return (
-                        <div className="override-item" key={perm.id}>
-                          <div className="override-info">
-                            <strong>{perm.code}</strong>
-                            <span>{perm.description}</span>
-                            <small>Estado plantilla: {isDefaultGranted ? "Permitido (Heredado)" : "Denegado (Heredado)"}</small>
+                    {permissionGroups.map((group) => (
+                      <section className="permission-app-section" key={group.scope}>
+                        <header className="permission-app-header">
+                          <div>
+                            <strong>{group.label}</strong>
+                            <span>{group.permissions.length} permisos</span>
                           </div>
-                          <div className="override-choices">
-                            <label 
-                              className={`choice-label ${currentEffect === "default" ? "active" : ""}`}
-                              onClick={() => {
-                                if (currentEffect !== "default") {
-                                  handleOverride("default");
-                                }
-                              }}
-                            >
-                              <input
-                                type="radio"
-                                name={`override-${user.id}-${perm.id}`}
-                                checked={currentEffect === "default"}
-                                readOnly
-                              />
-                              Heredar
-                            </label>
-                            <label 
-                              className={`choice-label allow ${isAllowed ? "active" : ""}`}
-                              onClick={() => {
-                                if (currentEffect !== "allow") {
-                                  handleOverride("allow");
-                                }
-                              }}
-                            >
-                              <input
-                                type="radio"
-                                name={`override-${user.id}-${perm.id}`}
-                                checked={isAllowed}
-                                readOnly
-                              />
-                              Permitir
-                            </label>
-                            <label 
-                              className={`choice-label deny ${isDenied ? "active" : ""}`}
-                              onClick={() => {
-                                if (currentEffect !== "deny") {
-                                  handleOverride("deny");
-                                }
-                              }}
-                            >
-                              <input
-                                type="radio"
-                                name={`override-${user.id}-${perm.id}`}
-                                checked={isDenied}
-                                readOnly
-                              />
-                              Denegar
-                            </label>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          <code>{group.scope}</code>
+                        </header>
+                        {group.permissions.map((perm) => {
+                          const isDefaultGranted = inheritedPermissions.has(perm.code);
+                          const override = user.overrides?.find((o) => o.permission_id === perm.id);
+                          const currentEffect = override ? override.effect : "default";
+
+                          const isAllowed = currentEffect === "allow" || (currentEffect === "default" && isDefaultGranted);
+                          const isDenied = currentEffect === "deny" || (currentEffect === "default" && !isDefaultGranted);
+
+                          const handleOverride = async (effect: "allow" | "deny" | "default") => {
+                            try {
+                              if (effect === "default") {
+                                await api.deletePermissionOverride(user.id, perm.id);
+                              } else {
+                                await api.setPermissionOverride(user.id, perm.id, effect);
+                              }
+                              refresh();
+                            } catch (err: any) {
+                              alert(err.message ?? "Error guardando override");
+                            }
+                          };
+
+                          return (
+                            <div className="override-item" key={perm.id}>
+                              <div className="override-info">
+                                <strong>{perm.code}</strong>
+                                <span>{perm.description}</span>
+                                <small>Estado plantilla: {isDefaultGranted ? "Permitido (Heredado)" : "Denegado (Heredado)"}</small>
+                              </div>
+                              <div className="override-choices">
+                                <label
+                                  className={`choice-label ${currentEffect === "default" ? "active" : ""}`}
+                                  onClick={() => {
+                                    if (currentEffect !== "default") {
+                                      handleOverride("default");
+                                    }
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`override-${user.id}-${perm.id}`}
+                                    checked={currentEffect === "default"}
+                                    readOnly
+                                  />
+                                  Heredar
+                                </label>
+                                <label
+                                  className={`choice-label allow ${isAllowed ? "active" : ""}`}
+                                  onClick={() => {
+                                    if (currentEffect !== "allow") {
+                                      handleOverride("allow");
+                                    }
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`override-${user.id}-${perm.id}`}
+                                    checked={isAllowed}
+                                    readOnly
+                                  />
+                                  Permitir
+                                </label>
+                                <label
+                                  className={`choice-label deny ${isDenied ? "active" : ""}`}
+                                  onClick={() => {
+                                    if (currentEffect !== "deny") {
+                                      handleOverride("deny");
+                                    }
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`override-${user.id}-${perm.id}`}
+                                    checked={isDenied}
+                                    readOnly
+                                  />
+                                  Denegar
+                                </label>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </section>
+                    ))}
                   </div>
                 </div>
               )}
@@ -661,3 +673,30 @@ function UserActionMenu({
   );
 }
 
+type PermissionItem = { id: string; code: string; description: string };
+
+function groupPermissionsByApplication(permissions: PermissionItem[]) {
+  const labels: Record<string, string> = {
+    users: "GateStack · Usuarios",
+    templates: "GateStack · Templates",
+    apps: "GateStack · Aplicaciones",
+    projects: "GateStack · Proyectos",
+    audit: "GateStack · Auditoría",
+    gatewiki: "GateWiki",
+  };
+
+  const groups = permissions.reduce<Record<string, PermissionItem[]>>((current, permission) => {
+    const scope = permission.code.split(":")[0] || "general";
+    current[scope] = current[scope] ?? [];
+    current[scope].push(permission);
+    return current;
+  }, {});
+
+  return Object.entries(groups)
+    .map(([scope, scopedPermissions]) => ({
+      scope,
+      label: labels[scope] ?? scope[0]?.toUpperCase() + scope.slice(1),
+      permissions: scopedPermissions.sort((left, right) => left.code.localeCompare(right.code)),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
