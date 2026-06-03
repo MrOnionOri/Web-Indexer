@@ -40,6 +40,8 @@ services:
     container_name: gatestorage-service
     ports:
       - "8002:8002"
+    volumes:
+      - gatestorage_data:/app/data
     environment:
       - GATESTACK_API_URL=http://host.docker.internal:8000
       - DB_HOST=host.docker.internal
@@ -69,3 +71,4 @@ services:
 
 volumes:
   gatestack_mysql:
+  gatestorage_data:

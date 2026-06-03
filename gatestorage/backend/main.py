@@ -6,12 +6,14 @@ import hmac
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote_plus
 from typing import List, Optional
 
 import requests
-from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import BigInteger, Column, DateTime, String, Text, UniqueConstraint, create_engine, text
@@ -25,6 +27,7 @@ DB_NAME = os.getenv("DB_NAME", "gatestack")
 GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000").rstrip("/")
 GATESTACK_FALLBACK_URLS = [url.strip().rstrip("/") for url in os.getenv("GATESTACK_FALLBACK_URLS", "").split(",") if url.strip()]
 GATESTACK_SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
+STORAGE_ROOT = Path(os.getenv("STORAGE_ROOT", "./data/storage")).resolve()
 CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
     "CORS_ALLOWED_ORIGIN_REGEX",
     r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
@@ -79,6 +82,21 @@ class StorageRequestModel(Base):
     reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StorageFileModel(Base):
+    __tablename__ = "storage_files"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id = Column(String(36), nullable=False, index=True)
+    original_filename = Column(String(255), nullable=False)
+    stored_filename = Column(String(255), nullable=False)
+    relative_path = Column(String(600), nullable=False)
+    content_type = Column(String(180), nullable=True)
+    size_bytes = Column(BigInteger, nullable=False)
+    uploaded_by_user_id = Column(String(36), nullable=False, index=True)
+    uploaded_by_name = Column(String(160), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 Base.metadata.create_all(bind=engine)
@@ -141,6 +159,20 @@ class StorageRequestRead(BaseModel):
     reviewed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StorageFileRead(BaseModel):
+    id: str
+    workspace_id: str
+    original_filename: str
+    content_type: str | None
+    size_bytes: int
+    uploaded_by_user_id: str
+    uploaded_by_name: str
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -277,6 +309,33 @@ def check_permission(user: dict, permission: str):
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Missing permission: {permission}")
 
 
+def can_manage_workspace(user: dict, workspace: StorageWorkspaceModel) -> bool:
+    return bool(
+        user.get("is_platform_admin")
+        or "gatestorage:admin" in user.get("permissions", [])
+        or workspace.owner_user_id == user.get("id")
+    )
+
+
+def get_allowed_workspace(workspace_id: str, user: dict, db: Session) -> StorageWorkspaceModel:
+    check_permission(user, "gatestorage:view")
+    workspace = db.query(StorageWorkspaceModel).filter(StorageWorkspaceModel.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Storage workspace not found")
+    if not can_manage_workspace(user, workspace):
+        raise HTTPException(status_code=403, detail="You cannot access this storage workspace")
+    return workspace
+
+
+def safe_filename(filename: str) -> str:
+    name = Path(filename).name.strip().replace("\\", "_").replace("/", "_")
+    return name or "archivo"
+
+
+def workspace_dir(workspace_id: str) -> Path:
+    return STORAGE_ROOT / workspace_id
+
+
 def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, **kwargs):
     last_error = "GateStack IAM unavailable"
     for base_url in get_gatestack_urls(request):
@@ -315,17 +374,6 @@ def auth_me(user: dict = Depends(get_current_user)):
 @app.post("/auth/login")
 def login(payload: LoginRequest, request: Request):
     return forward_gatestack_request("POST", "/auth/login", request=request, json=payload.model_dump())
-
-
-@app.get("/api/workspaces/{source_app}/{workspace_key}", response_model=StorageWorkspaceRead | None)
-def get_workspace_storage(source_app: str, workspace_key: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    check_permission(user, "gatestorage:view")
-    workspace = (
-        db.query(StorageWorkspaceModel)
-        .filter(StorageWorkspaceModel.source_app == source_app, StorageWorkspaceModel.workspace_key == workspace_key.upper())
-        .first()
-    )
-    return workspace
 
 
 @app.post("/api/storage-requests", response_model=StorageRequestRead)
@@ -404,6 +452,106 @@ def list_my_workspaces(user: dict = Depends(get_current_user), db: Session = Dep
         .order_by(StorageWorkspaceModel.created_at.desc())
         .all()
     )
+
+
+@app.get("/api/workspaces/{workspace_id}/files", response_model=list[StorageFileRead])
+def list_workspace_files(workspace_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_allowed_workspace(workspace_id, user, db)
+    return (
+        db.query(StorageFileModel)
+        .filter(StorageFileModel.workspace_id == workspace_id)
+        .order_by(StorageFileModel.created_at.desc())
+        .all()
+    )
+
+
+@app.post("/api/workspaces/{workspace_id}/files", response_model=StorageFileRead)
+def upload_workspace_file(
+    workspace_id: str,
+    file: UploadFile = File(...),
+    folder: str = Form(default=""),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = get_allowed_workspace(workspace_id, user, db)
+    original_filename = safe_filename(file.filename or "archivo")
+    folder_parts = [safe_filename(part) for part in folder.split("/") if part.strip()]
+    stored_filename = f"{uuid.uuid4()}_{original_filename}"
+    relative_path = Path(*folder_parts, stored_filename) if folder_parts else Path(stored_filename)
+    destination = workspace_dir(workspace.id) / relative_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    size_bytes = 0
+    try:
+        with destination.open("wb") as output:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if workspace.used_bytes + size_bytes > workspace.quota_bytes:
+                    raise HTTPException(status_code=400, detail="Storage quota exceeded")
+                output.write(chunk)
+    except HTTPException:
+        if destination.exists():
+            destination.unlink()
+        raise
+    finally:
+        file.file.close()
+
+    storage_file = StorageFileModel(
+        workspace_id=workspace.id,
+        original_filename=original_filename,
+        stored_filename=stored_filename,
+        relative_path=str(relative_path).replace("\\", "/"),
+        content_type=file.content_type,
+        size_bytes=size_bytes,
+        uploaded_by_user_id=user.get("id"),
+        uploaded_by_name=user.get("full_name"),
+    )
+    workspace.used_bytes += size_bytes
+    db.add(storage_file)
+    db.commit()
+    db.refresh(storage_file)
+    return storage_file
+
+
+@app.get("/api/files/{file_id}/download")
+def download_storage_file(file_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    storage_file = db.query(StorageFileModel).filter(StorageFileModel.id == file_id).first()
+    if not storage_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
+    path = (workspace_dir(workspace.id) / storage_file.relative_path).resolve()
+    if not str(path).startswith(str(workspace_dir(workspace.id).resolve())) or not path.exists():
+        raise HTTPException(status_code=404, detail="File content not found")
+    return FileResponse(path, media_type=storage_file.content_type or "application/octet-stream", filename=storage_file.original_filename)
+
+
+@app.delete("/api/files/{file_id}", status_code=204)
+def delete_storage_file(file_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    storage_file = db.query(StorageFileModel).filter(StorageFileModel.id == file_id).first()
+    if not storage_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
+    path = (workspace_dir(workspace.id) / storage_file.relative_path).resolve()
+    if str(path).startswith(str(workspace_dir(workspace.id).resolve())) and path.exists():
+        path.unlink()
+    workspace.used_bytes = max(0, workspace.used_bytes - storage_file.size_bytes)
+    db.delete(storage_file)
+    db.commit()
+    return None
+
+
+@app.get("/api/workspaces/{source_app}/{workspace_key}", response_model=StorageWorkspaceRead | None)
+def get_workspace_storage(source_app: str, workspace_key: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    check_permission(user, "gatestorage:view")
+    workspace = (
+        db.query(StorageWorkspaceModel)
+        .filter(StorageWorkspaceModel.source_app == source_app, StorageWorkspaceModel.workspace_key == workspace_key.upper())
+        .first()
+    )
+    return workspace
 
 
 @app.patch("/api/storage-requests/{request_id}/review", response_model=StorageRequestRead)
