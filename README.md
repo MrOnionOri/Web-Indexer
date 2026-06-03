@@ -17,6 +17,19 @@ frontend/  Portal web para usuarios y administradores
 
 ## Arranque rapido
 
+### Sin Docker
+
+Esta rama incluye scripts para correr todo local con tu MySQL instalado:
+
+```powershell
+.\scripts\install-local.ps1 -DbPassword "TU_PASSWORD_MYSQL"
+.\scripts\start-local.ps1 -HostIp "192.168.1.150" -DbPassword "TU_PASSWORD_MYSQL"
+```
+
+Mas detalle en [LOCAL_NO_DOCKER.md](LOCAL_NO_DOCKER.md).
+
+### Solo GateStack
+
 Base de datos con MySQL local:
 
 ```bash
