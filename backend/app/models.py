@@ -44,6 +44,19 @@ class ProjectStatus(str, enum.Enum):
     archived = "archived"
 
 
+class AppAccessRequestStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class FeedbackStatus(str, enum.Enum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -58,6 +71,10 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(String(255))
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.pending, index=True)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    must_reset_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_reset_token: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     template_assignments: Mapped[list["UserPermissionTemplate"]] = relationship(back_populates="user")
     permission_overrides: Mapped[list["UserPermissionOverride"]] = relationship(back_populates="user")
@@ -127,7 +144,67 @@ class RegisteredApp(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     homepage_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    required_permission_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True)
+
+
+class AppAccessRequest(Base, TimestampMixin):
+    __tablename__ = table_name("app_access_requests")
+    __table_args__ = (UniqueConstraint("app_id", "user_id", "status", name="uq_app_access_request_status"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    app_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('registered_apps')}.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"))
+    status: Mapped[AppAccessRequestStatus] = mapped_column(Enum(AppAccessRequestStatus), default=AppAccessRequestStatus.pending, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    admin_notes: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    app: Mapped[RegisteredApp] = relationship()
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+
+class PortalHomeSettings(Base, TimestampMixin):
+    __tablename__ = table_name("portal_home_settings")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    headline: Mapped[str] = mapped_column(String(180), default="GateStack")
+    subheadline: Mapped[str] = mapped_column(String(255), default="Portal principal de aplicaciones internas")
+    welcome_message: Mapped[str] = mapped_column(Text, default="Accede a tus aplicaciones aprobadas desde un solo lugar.")
+    hero_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    announcement: Mapped[str] = mapped_column(String(255), default="")
+
+
+class FeedbackItem(Base, TimestampMixin):
+    __tablename__ = table_name("feedback_items")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    source_app: Mapped[str] = mapped_column(String(80), default="gatewiki", index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    message: Mapped[str] = mapped_column(Text)
+    status: Mapped[FeedbackStatus] = mapped_column(Enum(FeedbackStatus), default=FeedbackStatus.open, index=True)
+    page_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    page_title: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    space_key: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_by_name: Mapped[str] = mapped_column(String(160))
+    created_by_email: Mapped[str] = mapped_column(String(255), index=True)
+    public_response: Mapped[str] = mapped_column(Text, default="")
+    responded_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    responded_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class FeedbackInternalNote(Base, TimestampMixin):
+    __tablename__ = table_name("feedback_internal_notes")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    feedback_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('feedback_items')}.id"), index=True)
+    author_user_id: Mapped[str] = mapped_column(String(36))
+    author_name: Mapped[str] = mapped_column(String(160))
+    note: Mapped[str] = mapped_column(Text)
 
 
 class ProjectUpload(Base, TimestampMixin):

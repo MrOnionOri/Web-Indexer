@@ -1,18 +1,20 @@
 import os
+import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models import AuditLog, ProjectStatus, ProjectUpload, User
 from app.schemas import ProjectRead, ProjectReviewRequest
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 UPLOAD_DIR = Path("storage/uploads")
 ALLOWED_ARCHIVES = {".zip"}
+logger = logging.getLogger("gatestack.projects")
 
 
 def detect_stack(filename: str) -> str:
@@ -63,10 +65,42 @@ async def upload_project(
     return project
 
 
+def simulate_deployment(project_id: str, db_session_factory):
+    import time
+    db = db_session_factory()
+    try:
+        project = db.get(ProjectUpload, project_id)
+        if not project:
+            return
+
+        project.status = ProjectStatus.building
+        db.commit()
+
+        time.sleep(4)
+
+        db.refresh(project)
+        if project.status != ProjectStatus.building:
+            return
+
+        if "fail" in project.original_filename.lower():
+            project.status = ProjectStatus.build_failed
+            project.review_notes = (project.review_notes or "") + "\n\n[System Log] Build Error: SyntaxError inside index.js. Exit code 1."
+        else:
+            project.status = ProjectStatus.running
+            project.review_notes = (project.review_notes or "") + f"\n\n[System Log] Build Success. Service exposed internally at http://localhost:8000/sandbox/{project.id}"
+
+        db.commit()
+    except Exception:
+        logger.exception("Project deployment simulation failed for project %s", project_id)
+    finally:
+        db.close()
+
+
 @router.patch("/{project_id}/review", response_model=ProjectRead)
 def review_project(
     project_id: str,
     payload: ProjectReviewRequest,
+    background_tasks: BackgroundTasks,
     actor: User = Depends(require_permission("projects:review")),
     db: Session = Depends(get_db),
 ):
@@ -81,4 +115,8 @@ def review_project(
     db.add(AuditLog(actor_user_id=actor.id, action="projects.reviewed", target_type="project", target_id=project.id))
     db.commit()
     db.refresh(project)
+
+    if payload.status == ProjectStatus.approved:
+        background_tasks.add_task(simulate_deployment, project.id, SessionLocal)
+
     return project

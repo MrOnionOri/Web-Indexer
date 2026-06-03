@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "GateStack"
     environment: str = "local"
     secret_key: str = "change-this-secret-key"
-    access_token_expire_minutes: int = 20
+    access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 14
     database_url: str | None = None
     db_host: str = "127.0.0.1"
@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     db_user: str = "root"
     db_password: str = ""
     db_name: str = "gatestack"
-    db_table_prefix: str = "gatestack_"
-    backend_cors_origins: list[AnyHttpUrl] | list[str] = ["http://localhost:5173"]
+    db_table_prefix: str = ""
+    backend_cors_origins: list[AnyHttpUrl] | list[str] = ["http://192.168.1.150:5173", "http://192.168.1.150:8001", "http://192.168.1.150:5174"]
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
 
