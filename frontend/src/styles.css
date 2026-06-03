@@ -1712,6 +1712,14 @@ code {
   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.15);
 }
 
+.modal-box.app-edit-modal {
+  max-width: 720px;
+}
+
+.modal-form-grid {
+  margin-top: 0;
+}
+
 .modal-box h3 {
   margin: 0 0 6px;
   font-size: 18px;

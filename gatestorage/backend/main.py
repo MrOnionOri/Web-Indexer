@@ -1,5 +1,10 @@
 import os
 import uuid
+import base64
+import hashlib
+import hmac
+import json
+import time
 from datetime import datetime
 from urllib.parse import quote_plus
 from typing import List, Optional
@@ -9,7 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, Column, DateTime, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import BigInteger, Column, DateTime, String, Text, UniqueConstraint, create_engine, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -19,6 +24,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000").rstrip("/")
 GATESTACK_FALLBACK_URLS = [url.strip().rstrip("/") for url in os.getenv("GATESTACK_FALLBACK_URLS", "").split(",") if url.strip()]
+GATESTACK_SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
 CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
     "CORS_ALLOWED_ORIGIN_REGEX",
     r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
@@ -164,7 +170,91 @@ def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
     ]))
 
 
-def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
+def b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def decode_gatestack_token(token: str) -> dict | None:
+    try:
+        header_part, payload_part, signature_part = token.split(".")
+        signed = f"{header_part}.{payload_part}".encode("utf-8")
+        expected_signature = hmac.new(GATESTACK_SECRET_KEY.encode("utf-8"), signed, hashlib.sha256).digest()
+        received_signature = b64url_decode(signature_part)
+        if not hmac.compare_digest(expected_signature, received_signature):
+            return None
+
+        payload = json.loads(b64url_decode(payload_part).decode("utf-8"))
+        if payload.get("type") != "access":
+            return None
+        if payload.get("exp") and int(payload["exp"]) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def get_local_effective_permissions(db: Session, user_id: str) -> list[str]:
+    template_permissions = db.execute(
+        text(
+            """
+            SELECT p.code
+            FROM permissions p
+            JOIN template_permissions tp ON tp.permission_id = p.id
+            JOIN user_permission_templates upt ON upt.template_id = tp.template_id
+            WHERE upt.user_id = :user_id
+            """
+        ),
+        {"user_id": user_id},
+    ).scalars()
+    effective = set(template_permissions)
+
+    overrides = db.execute(
+        text(
+            """
+            SELECT p.code, upo.effect
+            FROM permissions p
+            JOIN user_permission_overrides upo ON upo.permission_id = p.id
+            WHERE upo.user_id = :user_id
+            """
+        ),
+        {"user_id": user_id},
+    ).all()
+    for code, effect in overrides:
+        if effect == "allow":
+            effective.add(code)
+        elif effect == "deny":
+            effective.discard(code)
+    return sorted(effective)
+
+
+def get_local_user_from_token(token: str, db: Session) -> dict | None:
+    payload = decode_gatestack_token(token)
+    if not payload:
+        return None
+
+    row = db.execute(
+        text("SELECT id, email, full_name, status, is_platform_admin FROM users WHERE id = :user_id"),
+        {"user_id": payload.get("sub")},
+    ).mappings().first()
+    if not row or row["status"] != "approved":
+        return None
+
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "full_name": row["full_name"],
+        "status": row["status"],
+        "is_platform_admin": bool(row["is_platform_admin"]),
+        "permissions": get_local_effective_permissions(db, row["id"]),
+    }
+
+
+def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Session = Depends(get_db),
+) -> dict:
     headers = {"Authorization": f"Bearer {credentials.credentials}"}
     for base_url in get_gatestack_urls(request):
         try:
@@ -173,6 +263,11 @@ def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials
                 return response.json()
         except Exception:
             continue
+
+    local_user = get_local_user_from_token(credentials.credentials, db)
+    if local_user:
+        return local_user
+
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="GateStack IAM unavailable or invalid token")
 
 
@@ -238,14 +333,6 @@ def create_storage_request(payload: StorageRequestCreate, user: dict = Depends(g
     check_permission(user, "gatestorage:request")
     workspace_key = payload.workspace_key.upper()
 
-    existing_workspace = (
-        db.query(StorageWorkspaceModel)
-        .filter(StorageWorkspaceModel.source_app == payload.source_app, StorageWorkspaceModel.workspace_key == workspace_key)
-        .first()
-    )
-    if existing_workspace:
-        raise HTTPException(status_code=409, detail="This workspace already has storage assigned")
-
     existing_pending = (
         db.query(StorageRequestModel)
         .filter(
@@ -272,6 +359,22 @@ def create_storage_request(payload: StorageRequestCreate, user: dict = Depends(g
     db.add(request)
     db.commit()
     db.refresh(request)
+    return request
+
+
+@app.get("/api/storage-requests/{source_app}/{workspace_key}/latest", response_model=StorageRequestRead | None)
+def get_latest_storage_request(source_app: str, workspace_key: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    check_permission(user, "gatestorage:request")
+    request = (
+        db.query(StorageRequestModel)
+        .filter(StorageRequestModel.source_app == source_app, StorageRequestModel.workspace_key == workspace_key.upper())
+        .order_by(StorageRequestModel.created_at.desc())
+        .first()
+    )
+    if not request:
+        return None
+    if not user.get("is_platform_admin") and "gatestorage:admin" not in user.get("permissions", []) and request.owner_user_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="You cannot view this storage request")
     return request
 
 
@@ -322,19 +425,28 @@ def review_storage_request(request_id: str, payload: StorageRequestReview, user:
     request.reviewed_at = datetime.utcnow()
 
     if payload.status == "approved":
-        workspace = StorageWorkspaceModel(
-            source_app=request.source_app,
-            external_workspace_id=request.external_workspace_id,
-            workspace_key=request.workspace_key,
-            workspace_name=request.workspace_name,
-            owner_user_id=request.owner_user_id,
-            owner_name=request.owner_name,
-            owner_email=request.owner_email,
-            quota_bytes=payload.quota_bytes,
-            used_bytes=0,
-            status="active",
+        workspace = (
+            db.query(StorageWorkspaceModel)
+            .filter(StorageWorkspaceModel.source_app == request.source_app, StorageWorkspaceModel.workspace_key == request.workspace_key)
+            .first()
         )
-        db.add(workspace)
+        if workspace:
+            workspace.quota_bytes += payload.quota_bytes
+            workspace.status = "active"
+        else:
+            workspace = StorageWorkspaceModel(
+                source_app=request.source_app,
+                external_workspace_id=request.external_workspace_id,
+                workspace_key=request.workspace_key,
+                workspace_name=request.workspace_name,
+                owner_user_id=request.owner_user_id,
+                owner_name=request.owner_name,
+                owner_email=request.owner_email,
+                quota_bytes=payload.quota_bytes,
+                used_bytes=0,
+                status="active",
+            )
+            db.add(workspace)
 
     db.commit()
     db.refresh(request)

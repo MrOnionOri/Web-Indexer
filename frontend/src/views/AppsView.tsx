@@ -1,4 +1,4 @@
-import { AppWindow, CheckCircle2, ExternalLink, LockKeyhole, Plus, Send, XCircle } from "lucide-react";
+import { AppWindow, CheckCircle2, ExternalLink, LockKeyhole, Pencil, Plus, Send, XCircle } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { api, AppAccessRequest, PermissionOption, RegisteredApp } from "../api";
 import { EmptyState, StatusBadge } from "../components/ui";
@@ -20,6 +20,7 @@ export function AppsView({
   const [accessRequests, setAccessRequests] = useState<AppAccessRequest[]>([]);
   const [permissionOptions, setPermissionOptions] = useState<PermissionOption[]>([]);
   const [requestingApp, setRequestingApp] = useState<RegisteredApp | null>(null);
+  const [editingApp, setEditingApp] = useState<RegisteredApp | null>(null);
   const [requestReason, setRequestReason] = useState("");
   const [requestMessage, setRequestMessage] = useState("");
   const canManageApps = permissions.includes("apps:manage");
@@ -51,6 +52,31 @@ export function AppsView({
       refresh();
     } catch (err: any) {
       setError(err.message ?? "No se pudo registrar la aplicacion");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUpdateApp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingApp) return;
+    setSaving(true);
+    setError("");
+
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    const slug = String(form.get("slug") ?? "").trim().toLowerCase();
+    const description = String(form.get("description") ?? "").trim();
+    const homepageUrl = String(form.get("homepageUrl") ?? "").trim();
+    const logoUrl = String(form.get("logoUrl") ?? "").trim();
+    const requiredPermissionCode = String(form.get("requiredPermissionCode") ?? "").trim();
+
+    try {
+      await api.updateApp(editingApp.id, name, slug, description, homepageUrl || null, logoUrl || null, requiredPermissionCode);
+      setEditingApp(null);
+      refresh();
+    } catch (err: any) {
+      setError(err.message ?? "No se pudo actualizar la aplicacion");
     } finally {
       setSaving(false);
     }
@@ -172,6 +198,12 @@ export function AppsView({
               <code>{app.required_permission_code || app.slug}</code>
             </div>
             <div className="app-tile-actions">
+              {showAdminTools && (
+                <button className="secondary-action compact" type="button" onClick={() => setEditingApp(app)}>
+                  <Pencil />
+                  Editar
+                </button>
+              )}
               {app.has_access && app.homepage_url ? (
                 <a className="secondary-action compact" href={app.homepage_url} target="_blank" rel="noreferrer">
                   <ExternalLink />
@@ -213,6 +245,66 @@ export function AppsView({
                 Enviar solicitud
               </button>
               <button className="secondary-action" type="button" onClick={() => setRequestingApp(null)}>
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingApp && (
+        <div className="modal-backdrop">
+          <form className="modal-box app-edit-modal" onSubmit={handleUpdateApp}>
+            <h3>Editar aplicacion</h3>
+            <p>Actualiza como se muestra la app y el permiso minimo para abrirla.</p>
+            <div className="app-form modal-form-grid">
+              <label>
+                Nombre
+                <input name="name" defaultValue={editingApp.name} required minLength={2} maxLength={140} />
+              </label>
+              <label>
+                Slug
+                <input name="slug" defaultValue={editingApp.slug} required minLength={2} maxLength={100} pattern="[a-z0-9-]+" />
+              </label>
+              <label>
+                URL de inicio
+                <input name="homepageUrl" defaultValue={editingApp.homepage_url ?? ""} placeholder="https://wiki.tu-dominio.local" type="url" />
+              </label>
+              <label>
+                Logo URL
+                <input name="logoUrl" defaultValue={editingApp.logo_url ?? ""} placeholder="https://tu-dominio/logo.png" type="url" />
+              </label>
+              <label className="wide-field">
+                Permiso minimo para abrir
+                <select name="requiredPermissionCode" required defaultValue={editingApp.required_permission_code ?? ""}>
+                  <option value="" disabled>
+                    Selecciona un permiso
+                  </option>
+                  {permissionOptions.map((permission) => (
+                    <option value={permission.code} key={permission.id}>
+                      {permission.code} - {permission.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="wide-field">
+                Descripcion
+                <textarea name="description" defaultValue={editingApp.description} rows={3} />
+              </label>
+            </div>
+            {error && <p className="load-error">{error}</p>}
+            <div className="modal-buttons">
+              <button className="primary compact" disabled={saving}>
+                {saving ? "Guardando..." : "Guardar cambios"}
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => {
+                  setEditingApp(null);
+                  setError("");
+                }}
+              >
                 Cancelar
               </button>
             </div>

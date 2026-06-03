@@ -2189,6 +2189,71 @@ h1, h2, h3, h4, h5, h6 {
     font-weight: 700;
 }
 
+.storage-status-approved,
+.storage-request-state-approved span {
+    background: var(--color-success-glow);
+    color: #4caf50;
+}
+
+.storage-request-state {
+    display: grid;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid var(--border-color);
+}
+
+.storage-request-state > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.storage-request-state span {
+    width: fit-content;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.storage-request-state strong {
+    color: var(--text-title);
+}
+
+.storage-request-state p {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.storage-request-state-pending {
+    background: var(--color-warning-glow);
+    border-color: rgba(249, 168, 37, 0.26);
+}
+
+.storage-request-state-pending span {
+    background: rgba(249, 168, 37, 0.18);
+    color: var(--color-warning);
+}
+
+.storage-request-state-approved {
+    background: var(--color-success-glow);
+    border-color: rgba(46, 125, 50, 0.26);
+}
+
+.storage-request-state-rejected {
+    background: var(--color-danger-glow);
+    border-color: rgba(211, 47, 47, 0.28);
+}
+
+.storage-request-state-rejected span {
+    background: rgba(211, 47, 47, 0.18);
+    color: var(--color-danger-hover);
+}
+
 /* Admin panel subview styling */
 .admin-view-header {
     margin-bottom: 28px;

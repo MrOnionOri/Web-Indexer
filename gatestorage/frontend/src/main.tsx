@@ -50,7 +50,7 @@ type StorageWorkspace = {
 //   return response.json();
 // }
 
-const API_BASE_URL = "http://192.168.1.150:8000";
+const API_BASE_URL = import.meta.env.VITE_GATESTORAGE_BACKEND_URL ?? "http://192.168.1.150:8002";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("gatestorage_token");

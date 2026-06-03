@@ -9,7 +9,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_permission
 from app.db.session import get_db
 from app.models import AppAccessRequest, AppAccessRequestStatus, AuditLog, OverrideEffect, Permission, RegisteredApp, User, UserPermissionOverride
-from app.schemas import AppAccessRequestCreateRequest, AppAccessRequestRead, AppAccessRequestReviewRequest, AppCreateRequest, AppRead, PermissionRead
+from app.schemas import (
+    AppAccessRequestCreateRequest,
+    AppAccessRequestRead,
+    AppAccessRequestReviewRequest,
+    AppCreateRequest,
+    AppRead,
+    AppUpdateRequest,
+    PermissionRead,
+)
 from app.services.permissions import has_permission
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -41,6 +49,41 @@ def create_app(
     db.add(app)
     db.flush()
     db.add(AuditLog(actor_user_id=actor.id, action="apps.created", target_type="app", target_id=app.id))
+    db.commit()
+    db.refresh(app)
+    return serialize_app_for_user(db, app, actor)
+
+
+@router.patch("/{app_id}", response_model=AppRead)
+def update_app(
+    app_id: str,
+    payload: AppUpdateRequest,
+    actor: User = Depends(require_permission("apps:manage")),
+    db: Session = Depends(get_db),
+):
+    app = db.get(RegisteredApp, app_id)
+    if not app:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+    duplicate_slug = db.scalar(select(RegisteredApp).where(RegisteredApp.slug == payload.slug, RegisteredApp.id != app.id))
+    if duplicate_slug:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="App slug already exists")
+
+    duplicate_name = db.scalar(select(RegisteredApp).where(RegisteredApp.name == payload.name, RegisteredApp.id != app.id))
+    if duplicate_name:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="App name already exists")
+
+    if not db.scalar(select(Permission).where(Permission.code == payload.required_permission_code)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Required permission does not exist")
+
+    app.name = payload.name
+    app.slug = payload.slug
+    app.description = payload.description
+    app.homepage_url = payload.homepage_url
+    app.logo_url = payload.logo_url
+    app.required_permission_code = payload.required_permission_code
+
+    db.add(AuditLog(actor_user_id=actor.id, action="apps.updated", target_type="app", target_id=app.id))
     db.commit()
     db.refresh(app)
     return serialize_app_for_user(db, app, actor)

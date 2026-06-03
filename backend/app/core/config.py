@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "GateStack"
     environment: str = "local"
     secret_key: str = "change-this-secret-key"
-    access_token_expire_minutes: int = 20
+    access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 14
     database_url: str | None = None
     db_host: str = "127.0.0.1"

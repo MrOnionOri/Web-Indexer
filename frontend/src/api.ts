@@ -186,6 +186,26 @@ export const api = {
         required_permission_code: requiredPermissionCode,
       }),
     }),
+  updateApp: (
+    appId: string,
+    name: string,
+    slug: string,
+    description: string,
+    homepageUrl: string | null,
+    logoUrl: string | null,
+    requiredPermissionCode: string,
+  ) =>
+    request<RegisteredApp>(`/apps/${appId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name,
+        slug,
+        description,
+        homepage_url: homepageUrl,
+        logo_url: logoUrl,
+        required_permission_code: requiredPermissionCode,
+      }),
+    }),
   requestAppAccess: (appId: string, reason: string) =>
     request<AppAccessRequest>(`/apps/${appId}/access-requests`, {
       method: "POST",

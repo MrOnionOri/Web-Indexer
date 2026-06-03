@@ -84,6 +84,9 @@ export default function SpaceSettings({
     api.spaceStorage(token, activeSpace.id)
       .then(setStorage)
       .catch(() => setStorage(null));
+    api.spaceStorageRequest(token, activeSpace.id)
+      .then(setStorageRequest)
+      .catch(() => setStorageRequest(null));
   }, [token, activeSpace.id]);
 
   const handleAddEmail = (email: string) => {
@@ -123,7 +126,7 @@ export default function SpaceSettings({
     try {
       const request = await api.requestSpaceStorage(token, activeSpace.id, storageGb, storageReason);
       setStorageRequest(request);
-      setStorageNotice("Solicitud enviada. Un admin asignara la cuota de almacenamiento.");
+      setStorageNotice(storage ? "Solicitud de aumento enviada. Un admin revisara la cuota." : "Solicitud enviada. Un admin asignara la cuota de almacenamiento.");
     } catch (error: any) {
       setStorageNotice(error.message || "No se pudo solicitar almacenamiento.");
     }
@@ -132,6 +135,21 @@ export default function SpaceSettings({
   const formatBytes = (bytes: number) => {
     if (!bytes) return "0 GB";
     return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  };
+
+  const hasPendingStorageRequest = storageRequest?.status === "pending";
+  const canSubmitStorageRequest = canRequestStorage && !hasPendingStorageRequest;
+  const storageActionLabel = storage ? "Solicitar aumento" : "Solicitar storage";
+  const storageTitle = storage ? "Storage activo para este workspace." : "Este workspace aun no tiene almacenamiento asignado.";
+  const storageDescription = storage
+    ? "Puedes solicitar un aumento de cuota. Un admin revisara la solicitud antes de aplicarla."
+    : "El storage no se crea automaticamente. El dueno del workspace debe solicitarlo y un admin aprueba la cuota.";
+
+  const getStorageStatusLabel = (status?: string) => {
+    if (status === "pending") return "En revision";
+    if (status === "approved") return "Aprobado";
+    if (status === "rejected") return "Denegado";
+    return status || "Sin solicitud";
   };
 
   return (
@@ -381,32 +399,50 @@ export default function SpaceSettings({
           <h2><HardDrive size={18} /> GateStorage</h2>
         </div>
         <div className="storage-card-body">
-          {storage ? (
+          {storage && (
             <div className="storage-summary">
               <strong>Storage activo para {storage.workspace_key}</strong>
               <p>Cuota asignada: {formatBytes(storage.quota_bytes)} · Uso actual: {formatBytes(storage.used_bytes)}</p>
-              <span className="storage-status">{storage.status}</span>
+              <span className="storage-status storage-status-approved">{storage.status}</span>
             </div>
-          ) : (
+          )}
+
+          {(canRequestStorage || storageRequest) && (
             <form className="storage-request-form" onSubmit={handleRequestStorage}>
               <div>
-                <strong>Este workspace aun no tiene almacenamiento asignado.</strong>
-                <p className="text-small">El storage no se crea automaticamente. El dueno del workspace debe solicitarlo y un admin aprueba la cuota.</p>
+                <strong>{storageTitle}</strong>
+                <p className="text-small">{storageDescription}</p>
               </div>
+              {storageRequest && (
+                <div className={`storage-request-state storage-request-state-${storageRequest.status}`}>
+                  <div>
+                    <span>{getStorageStatusLabel(storageRequest.status)}</span>
+                    <strong>{formatBytes(storageRequest.requested_bytes)} solicitados</strong>
+                  </div>
+                  {storageRequest.status === "pending" && <p>Tu solicitud esta en revision. Cuando un admin la apruebe, la cuota se aplicara automaticamente.</p>}
+                  {storageRequest.status === "approved" && <p>La solicitud fue aprobada. Si necesitas mas espacio, puedes enviar una solicitud de aumento.</p>}
+                  {storageRequest.status === "rejected" && (
+                    <p>
+                      Solicitud denegada{storageRequest.admin_notes ? `: ${storageRequest.admin_notes}` : ". Puedes corregir el motivo y volver a solicitar."}
+                    </p>
+                  )}
+                </div>
+              )}
+              {!hasPendingStorageRequest && (
               <div className="form-row">
                 <div className="form-group flex-1">
-                  <label>GB solicitados</label>
-                  <input type="number" min={1} value={storageGb} onChange={(e) => setStorageGb(Number(e.target.value))} disabled={!canRequestStorage} />
+                  <label>{storage ? "GB adicionales" : "GB solicitados"}</label>
+                  <input type="number" min={1} value={storageGb} onChange={(e) => setStorageGb(Number(e.target.value))} disabled={!canSubmitStorageRequest} />
                 </div>
                 <div className="form-group flex-2">
                   <label>Motivo</label>
-                  <input value={storageReason} onChange={(e) => setStorageReason(e.target.value)} placeholder="Para adjuntos, archivos de referencia, datasets..." disabled={!canRequestStorage} />
+                  <input value={storageReason} onChange={(e) => setStorageReason(e.target.value)} placeholder="Para adjuntos, archivos de referencia, datasets..." disabled={!canSubmitStorageRequest} />
                 </div>
               </div>
-              {storageRequest && <p className="text-small">Solicitud actual: {storageRequest.status}</p>}
+              )}
               {storageNotice && <p className="text-small">{storageNotice}</p>}
-              <button className="btn-primary" disabled={!canRequestStorage}>
-                Solicitar storage
+              <button className="btn-primary" disabled={!canSubmitStorageRequest}>
+                {hasPendingStorageRequest ? "En revision" : storageActionLabel}
               </button>
             </form>
           )}

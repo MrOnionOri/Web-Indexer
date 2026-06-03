@@ -390,6 +390,8 @@ def forward_gatestorage_request(method: str, path: str, request: Request, **kwar
     auth_header = request.headers.get("authorization")
     if auth_header:
         headers["Authorization"] = auth_header
+    elif request.cookies.get("gatestack_token"):
+        headers["Authorization"] = f"Bearer {request.cookies['gatestack_token']}"
 
     for base_url in get_gatestorage_urls(request):
         try:
@@ -641,6 +643,17 @@ def get_space_storage(space_id: str, request: Request, db: Session = Depends(get
         raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede ver el storage de este workspace.")
 
     return forward_gatestorage_request("GET", f"/api/workspaces/gatewiki/{space.key.upper()}", request=request)
+
+
+@app.get("/api/spaces/{space_id}/storage/request")
+def get_space_storage_request(space_id: str, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
+    if not space:
+        raise HTTPException(status_code=404, detail="Workspace no encontrado.")
+    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
+        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede ver solicitudes de storage.")
+
+    return forward_gatestorage_request("GET", f"/api/storage-requests/gatewiki/{space.key.upper()}/latest", request=request)
 
 
 @app.post("/api/spaces/{space_id}/storage/request")

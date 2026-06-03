@@ -168,6 +168,8 @@ export const api = {
     request<void>(`/api/spaces/${spaceId}`, { method: "DELETE", token }),
   spaceStorage: (token: string | null, spaceId: string) =>
     request<StorageWorkspace | null>(`/api/spaces/${spaceId}/storage`, { token }),
+  spaceStorageRequest: (token: string | null, spaceId: string) =>
+    request<StorageRequest | null>(`/api/spaces/${spaceId}/storage/request`, { token }),
   requestSpaceStorage: (token: string | null, spaceId: string, requestedGb: number, reason: string) =>
     request<StorageRequest>(`/api/spaces/${spaceId}/storage/request`, {
       method: "POST",

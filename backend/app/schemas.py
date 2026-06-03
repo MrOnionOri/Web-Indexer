@@ -113,6 +113,10 @@ class AppCreateRequest(BaseModel):
     required_permission_code: str = Field(min_length=3, max_length=120)
 
 
+class AppUpdateRequest(AppCreateRequest):
+    pass
+
+
 class AppRead(BaseModel):
     id: str
     name: str
