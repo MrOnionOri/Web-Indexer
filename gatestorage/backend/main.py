@@ -636,6 +636,13 @@ def create_storage_request(payload: StorageRequestCreate, user: dict = Depends(g
         .first()
     )
     if existing_pending:
+        existing_pending.external_workspace_id = payload.external_workspace_id
+        existing_pending.workspace_name = payload.workspace_name
+        existing_pending.owner_user_id = user.get("id")
+        existing_pending.owner_name = user.get("full_name")
+        existing_pending.owner_email = user.get("email")
+        existing_pending.requested_bytes = payload.requested_bytes
+        existing_pending.reason = payload.reason
         existing_pending.member_emails = ",".join(normalize_member_emails(payload.member_emails))
         db.commit()
         db.refresh(existing_pending)

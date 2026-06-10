@@ -48,11 +48,14 @@ app.include_router(projects.router)
 
 def run_auto_migrations(engine) -> None:
     from sqlalchemy import inspect, text
-    from app.models import User
+    from app.models import User, UserBadge
     users_table = User.__tablename__
+    badges_table = UserBadge.__tablename__
     safe_table_names = {table.name for table in Base.metadata.sorted_tables}
     if users_table not in safe_table_names:
         raise RuntimeError(f"Refusing to migrate unexpected table: {users_table}")
+    if badges_table not in safe_table_names:
+        raise RuntimeError(f"Refusing to migrate unexpected table: {badges_table}")
     try:
         inspector = inspect(engine)
         if users_table in inspector.get_table_names():
@@ -75,6 +78,12 @@ def run_auto_migrations(engine) -> None:
             if "password_reset_token" not in columns:
                 with engine.begin() as conn:
                     conn.execute(text(f"CREATE UNIQUE INDEX ix_{users_table}_password_reset_token ON {users_table} (password_reset_token)"))
+        if badges_table in inspector.get_table_names():
+            badge_columns = [col["name"] for col in inspector.get_columns(badges_table)]
+            if "logo_url" not in badge_columns:
+                print(f"Auto-migration: Adding missing column 'logo_url' to table '{badges_table}'...")
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {badges_table} ADD COLUMN logo_url VARCHAR(500) NULL"))
     except Exception as e:
         print(f"Auto-migration error: {e}")
 

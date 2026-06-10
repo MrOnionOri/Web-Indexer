@@ -9,6 +9,7 @@ BASE_PERMISSIONS = {
     "users:view": "View users",
     "users:approve": "Approve or reject pending users",
     "users:permissions": "Manage user permission templates and overrides",
+    "users:badges": "Create and assign identity badges to users",
     "templates:view": "View permission templates",
     "templates:manage": "Create and update permission templates",
     "apps:view": "View registered applications",

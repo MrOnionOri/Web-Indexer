@@ -4,7 +4,18 @@ export interface UserProfile {
   full_name: string;
   permissions: string[];
   is_platform_admin: boolean;
+  badges?: {
+    id: string;
+    code: string;
+    label: string;
+    description: string;
+    color: string;
+    icon: string;
+    logo_url: string | null;
+  }[];
 }
+
+const API_BASE_URL = import.meta.env.VITE_GATEWIKI_BACKEND_URL ?? `${window.location.protocol}//${window.location.hostname}:8001`;
 
 export interface Space {
   id: string;
@@ -133,7 +144,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
-  const response = await fetch(path, { ...options, headers, cache: "no-store" });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, cache: "no-store" });
   if (!response.ok) {
     const errorPayload = await response.json().catch(() => ({}));
     const detail = errorPayload.detail || "La solicitud no pudo completarse.";

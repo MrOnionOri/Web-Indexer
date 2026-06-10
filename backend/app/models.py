@@ -78,6 +78,34 @@ class User(Base, TimestampMixin):
 
     template_assignments: Mapped[list["UserPermissionTemplate"]] = relationship(back_populates="user")
     permission_overrides: Mapped[list["UserPermissionOverride"]] = relationship(back_populates="user")
+    badge_assignments: Mapped[list["UserBadgeAssignment"]] = relationship(back_populates="user")
+
+
+class UserBadge(Base, TimestampMixin):
+    __tablename__ = table_name("user_badges")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    code: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(String(255), default="")
+    color: Mapped[str] = mapped_column(String(24), default="#2563eb")
+    icon: Mapped[str] = mapped_column(String(60), default="award")
+    logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    assignments: Mapped[list["UserBadgeAssignment"]] = relationship(back_populates="badge")
+
+
+class UserBadgeAssignment(Base, TimestampMixin):
+    __tablename__ = table_name("user_badge_assignments")
+    __table_args__ = (UniqueConstraint("user_id", "badge_id", name="uq_user_badge_assignment"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"))
+    badge_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('user_badges')}.id"))
+    assigned_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="badge_assignments")
+    badge: Mapped[UserBadge] = relationship(back_populates="assignments")
 
 
 class Permission(Base, TimestampMixin):

@@ -8,8 +8,8 @@ Esta rama permite correr GateStack, GateWiki y GateStorage directo en Windows us
 - GateWiki API: `http://192.168.1.150:8001`
 - GateStorage API: `http://192.168.1.150:8002`
 - GateStack web: `http://192.168.1.150:5173`
-- GateStorage web: `http://192.168.1.150:5174`
-- GateWiki web: `http://192.168.1.150:5175`
+- GateWiki web: `http://192.168.1.150:5174`
+- GateStorage web: `http://192.168.1.150:5175`
 
 ## Primera instalacion
 

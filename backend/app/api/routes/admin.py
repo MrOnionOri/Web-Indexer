@@ -15,6 +15,8 @@ from app.models import (
     PermissionTemplate,
     TemplatePermission,
     User,
+    UserBadge,
+    UserBadgeAssignment,
     UserStatus,
     UserPermissionOverride,
     UserPermissionTemplate,
@@ -22,11 +24,15 @@ from app.models import (
 from app.schemas import (
     PermissionOverrideRequest,
     PermissionRead,
+    BadgeCreateRequest,
+    BadgeRead,
+    BadgeUpdateRequest,
     ForcePasswordResetRequest,
     PasswordResetLinkResponse,
     TemplateRead,
     UserApprovalRequest,
     UserRead,
+    UserBadgeAssignmentRequest,
     UserOverrideRead,
     UserCreateRequest,
     UserUpdateRequest,
@@ -275,6 +281,97 @@ def list_permissions(_: User = Depends(require_permission("users:permissions")),
     return db.scalars(select(Permission).order_by(Permission.code)).all()
 
 
+@router.get("/badges", response_model=list[BadgeRead])
+def list_badges(_: User = Depends(require_permission("users:badges")), db: Session = Depends(get_db)):
+    return db.scalars(select(UserBadge).order_by(UserBadge.label)).all()
+
+
+@router.post("/badges", response_model=BadgeRead, status_code=status.HTTP_201_CREATED)
+def create_badge(
+    payload: BadgeCreateRequest,
+    actor: User = Depends(require_permission("users:badges")),
+    db: Session = Depends(get_db),
+):
+    if db.scalar(select(UserBadge).where(UserBadge.code == payload.code)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Badge code already exists")
+    badge = UserBadge(**payload.model_dump())
+    db.add(badge)
+    db.flush()
+    db.add(AuditLog(actor_user_id=actor.id, action="badges.created", target_type="badge", target_id=badge.id))
+    db.commit()
+    db.refresh(badge)
+    return badge
+
+
+@router.patch("/badges/{badge_id}", response_model=BadgeRead)
+def update_badge(
+    badge_id: str,
+    payload: BadgeUpdateRequest,
+    actor: User = Depends(require_permission("users:badges")),
+    db: Session = Depends(get_db),
+):
+    badge = db.get(UserBadge, badge_id)
+    if not badge:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Badge not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(badge, field, value)
+    db.add(AuditLog(actor_user_id=actor.id, action="badges.updated", target_type="badge", target_id=badge.id))
+    db.commit()
+    db.refresh(badge)
+    return badge
+
+
+@router.post("/users/{user_id}/badges", response_model=UserRead)
+def assign_badge(
+    user_id: str,
+    payload: UserBadgeAssignmentRequest,
+    actor: User = Depends(require_permission("users:badges")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not db.get(UserBadge, payload.badge_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Badge not found")
+    statement = mysql_insert(UserBadgeAssignment).values(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        badge_id=payload.badge_id,
+        assigned_by_user_id=actor.id,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.execute(statement.on_duplicate_key_update(updated_at=datetime.utcnow()))
+    db.add(AuditLog(actor_user_id=actor.id, action="users.badge_assigned", target_type="user", target_id=user_id))
+    db.commit()
+    db.refresh(user)
+    return serialize_admin_user(db, user)
+
+
+@router.delete("/users/{user_id}/badges/{badge_id}", response_model=UserRead)
+def remove_badge(
+    user_id: str,
+    badge_id: str,
+    actor: User = Depends(require_permission("users:badges")),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    assignment = db.scalar(
+        select(UserBadgeAssignment).where(
+            UserBadgeAssignment.user_id == user_id,
+            UserBadgeAssignment.badge_id == badge_id,
+        )
+    )
+    if assignment:
+        db.delete(assignment)
+    db.add(AuditLog(actor_user_id=actor.id, action="users.badge_removed", target_type="user", target_id=user_id))
+    db.commit()
+    db.refresh(user)
+    return serialize_admin_user(db, user)
+
+
 @router.get("/templates", response_model=list[TemplateRead])
 def list_templates(_: User = Depends(require_permission("templates:view")), db: Session = Depends(get_db)):
     templates = db.scalars(select(PermissionTemplate).order_by(PermissionTemplate.name)).all()
@@ -315,6 +412,12 @@ def serialize_admin_user(db: Session, user: User) -> UserRead:
         UserOverrideRead(permission_id=row[0], permission_code=row[1], effect=row[2])
         for row in overrides_db
     ]
+    badges = db.scalars(
+        select(UserBadge)
+        .join(UserBadgeAssignment, UserBadgeAssignment.badge_id == UserBadge.id)
+        .where(UserBadgeAssignment.user_id == user.id)
+        .order_by(UserBadge.label)
+    ).all()
 
     return UserRead(
         id=user.id,
@@ -327,6 +430,7 @@ def serialize_admin_user(db: Session, user: User) -> UserRead:
         template_names=[template.name for template in assigned_templates],
         permissions=get_effective_permissions(db, user),
         overrides=overrides_list,
+        badges=list(badges),
         status_reason=user.status_reason,
         must_reset_password=user.must_reset_password,
     )

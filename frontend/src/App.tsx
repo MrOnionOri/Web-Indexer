@@ -10,7 +10,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Me, PortalHomeSettings, ProjectUpload, RegisteredApp, Template, User } from "./api";
+import { api, Me, PortalHomeSettings, ProjectUpload, RegisteredApp, Template, User, UserBadge } from "./api";
 import { Metric, NavButton } from "./components/ui";
 import { AppsView } from "./views/AppsView";
 import { DashboardView } from "./views/DashboardView";
@@ -53,6 +53,7 @@ function routePath(view: View, userViewMode: UserViewMode = "permissions") {
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [badges, setBadges] = useState<UserBadge[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [apps, setApps] = useState<RegisteredApp[]>([]);
   const [homeSettings, setHomeSettings] = useState<PortalHomeSettings | null>(null);
@@ -148,6 +149,14 @@ export function App() {
     if (can.has("users:view")) {
       api.users()
         .then(setUsers)
+        .catch((err) => {
+          checkMaintenance(err);
+          setLoadError(String(err));
+        });
+    }
+    if (can.has("users:badges") || me.is_platform_admin) {
+      api.badges()
+        .then(setBadges)
         .catch((err) => {
           checkMaintenance(err);
           setLoadError(String(err));
@@ -416,6 +425,7 @@ export function App() {
             users={users}
             me={me}
             templates={templates}
+            badges={badges}
             allPermissions={allPermissions}
             viewMode={userViewMode}
             refresh={() => setRefreshCount((c) => c + 1)}

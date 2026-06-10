@@ -8,8 +8,6 @@ from urllib.parse import quote_plus
 from fastapi import FastAPI, Depends, HTTPException, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, text, ForeignKey
@@ -1111,19 +1109,7 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
     db.commit()
     return {"message": f"Datos cargados: {created_spaces} espacios y {created_pages} pÃ¡ginas creadas."}
 
-# Servir archivos estÃ¡ticos especÃ­ficos y fallback para la SPA (React Routing)
-@app.get("/{path_name:path}")
-async def serve_static_or_spa(path_name: str):
-    # Evitar interceptar peticiones de la API que no existen
-    if path_name.startswith("api"):
-        raise HTTPException(status_code=404, detail="API endpoint not found")
-        
-    file_path = os.path.join("static", path_name)
-    if not path_name or os.path.isdir(file_path) or not os.path.exists(file_path):
-        index_path = os.path.join("static", "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-        raise HTTPException(status_code=404, detail="Frontend index.html not found.")
-        
-    return FileResponse(file_path)
+@app.get("/")
+def api_root():
+    return {"service": "GateWiki API", "docs": "/docs"}
 

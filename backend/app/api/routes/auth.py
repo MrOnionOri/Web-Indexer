@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
-from app.models import User, UserStatus
-from app.schemas import LoginRequest, MeResponse, PasswordResetConfirmRequest, RegisterRequest, TokenResponse
+from app.models import User, UserBadge, UserBadgeAssignment, UserStatus
+from app.schemas import BadgeRead, LoginRequest, MeResponse, PasswordResetConfirmRequest, RegisterRequest, TokenResponse
 from app.services.permissions import get_effective_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -29,7 +29,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return MeResponse.model_validate({**user.__dict__, "permissions": []})
+    return MeResponse.model_validate({**user.__dict__, "permissions": [], "badges": []})
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -51,7 +51,19 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=MeResponse)
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return MeResponse.model_validate({**user.__dict__, "permissions": get_effective_permissions(db, user)})
+    badges = db.scalars(
+        select(UserBadge)
+        .join(UserBadgeAssignment, UserBadgeAssignment.badge_id == UserBadge.id)
+        .where(UserBadgeAssignment.user_id == user.id)
+        .order_by(UserBadge.label)
+    ).all()
+    return MeResponse.model_validate(
+        {
+            **user.__dict__,
+            "permissions": get_effective_permissions(db, user),
+            "badges": [BadgeRead.model_validate(badge) for badge in badges],
+        }
+    )
 
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)

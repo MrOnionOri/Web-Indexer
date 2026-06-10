@@ -1,6 +1,16 @@
 import React, { useState } from "react";
-import { ArrowLeft, Lock, Globe, Edit3, Trash2, MessageSquare, Send } from "lucide-react";
+import { ArrowLeft, Award, Lock, Globe, Edit3, Trash2, MessageSquare, Send } from "lucide-react";
 import { parseSubtopics } from "../subtopics";
+
+interface UserBadge {
+  id: string;
+  code: string;
+  label: string;
+  description: string;
+  color: string;
+  icon: string;
+  logo_url: string | null;
+}
 
 interface UserProfile {
   id: string;
@@ -8,6 +18,7 @@ interface UserProfile {
   full_name: string;
   permissions: string[];
   is_platform_admin: boolean;
+  badges?: UserBadge[];
 }
 
 interface CommentReaction {
@@ -104,6 +115,25 @@ export default function PageRead({
     });
   };
 
+  const renderUserBadges = (userId: string) => {
+    if (userId !== currentUser.id || !currentUser.badges?.length) return null;
+    return (
+      <span className="inline-user-badges">
+        {currentUser.badges.slice(0, 3).map((badge) => (
+          <span
+            className="inline-user-badge"
+            style={{ borderColor: badge.color, color: badge.color }}
+            title={badge.description || badge.label}
+            key={badge.id}
+          >
+            {badge.logo_url ? <img className="inline-user-badge-logo" src={badge.logo_url} alt="" /> : <Award size={10} />}
+            {badge.label}
+          </span>
+        ))}
+      </span>
+    );
+  };
+
   const isOwner = activePage.created_by_id === currentUser.id;
   const pageSubtopics = parseSubtopics(activePage.subtopics);
   const selectedSubtopic = activeSubtopicIndex !== null && activeSubtopicIndex !== undefined
@@ -197,7 +227,10 @@ export default function PageRead({
           <div className="page-author-card">
             <div className="author-avatar">{getInitials(activePage.created_by_name)}</div>
             <div className="author-details">
-              <span className="author-name">{activePage.created_by_name}</span>
+              <span className="author-name">
+                {activePage.created_by_name}
+                {renderUserBadges(activePage.created_by_id)}
+              </span>
               <span className="page-date">Creada el {formatDate(activePage.created_at)}</span>
             </div>
             <div className="page-actions-right">
@@ -260,7 +293,10 @@ export default function PageRead({
                       </div>
                       <div className="comment-body-wrapper">
                         <div className="comment-meta">
-                          <span className="comment-author-name">{comment.author_name}</span>
+                          <span className="comment-author-name">
+                            {comment.author_name}
+                            {renderUserBadges(comment.author_id)}
+                          </span>
                           <span className="comment-timestamp">{formatDate(comment.created_at)}</span>
                           {canDelete && (
                             <button
@@ -317,7 +353,10 @@ export default function PageRead({
                               </div>
                               <div className="comment-body-wrapper">
                                 <div className="comment-meta">
-                                  <span className="comment-author-name">{reply.author_name}</span>
+                                  <span className="comment-author-name">
+                                    {reply.author_name}
+                                    {renderUserBadges(reply.author_id)}
+                                  </span>
                                   <span className="comment-timestamp">{formatDate(reply.created_at)}</span>
                                   {canDeleteReply && (
                                     <button

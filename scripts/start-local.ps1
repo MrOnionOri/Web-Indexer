@@ -78,12 +78,12 @@ Start-LocalProcess "gatewiki-api" (Get-PythonPath $gateWikiBackend) @("-m", "uvi
 Start-LocalProcess "gatestorage-api" (Get-PythonPath $gateStorageBackend) @("-m", "uvicorn", "main:app", "--host", $HostIp, "--port", "8002", "--reload") $gateStorageBackend
 
 Start-LocalProcess "gatestack-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5173") $gateStackFrontend
-Start-LocalProcess "gatewiki-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5175") $gateWikiFrontend
-Start-LocalProcess "gatestorage-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5174") $gateStorageFrontend
+Start-LocalProcess "gatewiki-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5174") $gateWikiFrontend
+Start-LocalProcess "gatestorage-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5175") $gateStorageFrontend
 
 Write-Host ""
 Write-Host "GateStack:    http://${HostIp}:5173"
-Write-Host "GateWiki:     http://${HostIp}:5175"
-Write-Host "GateStorage:  http://${HostIp}:5174"
+Write-Host "GateWiki:     http://${HostIp}:5174"
+Write-Host "GateStorage:  http://${HostIp}:5175"
 Write-Host "API docs:     http://${HostIp}:8000/docs | http://${HostIp}:8001/docs | http://${HostIp}:8002/docs"
 Write-Host "Logs:         $LogDir"

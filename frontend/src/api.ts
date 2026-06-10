@@ -19,6 +19,16 @@ export interface UserOverride {
   effect: "allow" | "deny";
 }
 
+export interface UserBadge {
+  id: string;
+  code: string;
+  label: string;
+  description: string;
+  color: string;
+  icon: string;
+  logo_url: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -30,6 +40,7 @@ export interface User {
   template_names: string[];
   permissions: string[];
   overrides: UserOverride[];
+  badges: UserBadge[];
   status_reason?: string | null;
   must_reset_password: boolean;
 }
@@ -164,6 +175,21 @@ export const api = {
   },
   me: () => request<Me>("/auth/me"),
   users: () => request<User[]>("/admin/users"),
+  badges: () => request<UserBadge[]>("/admin/badges"),
+  createBadge: (code: string, label: string, description: string, color: string, icon: string, logoUrl: string | null) =>
+    request<UserBadge>("/admin/badges", {
+      method: "POST",
+      body: JSON.stringify({ code, label, description, color, icon, logo_url: logoUrl }),
+    }),
+  assignBadge: (userId: string, badgeId: string) =>
+    request<User>(`/admin/users/${userId}/badges`, {
+      method: "POST",
+      body: JSON.stringify({ badge_id: badgeId }),
+    }),
+  removeBadge: (userId: string, badgeId: string) =>
+    request<User>(`/admin/users/${userId}/badges/${badgeId}`, {
+      method: "DELETE",
+    }),
   templates: () => request<Template[]>("/admin/templates"),
   apps: () => request<RegisteredApp[]>("/apps"),
   appPermissionOptions: () => request<PermissionOption[]>("/apps/permission-options"),

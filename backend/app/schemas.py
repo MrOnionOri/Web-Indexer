@@ -29,6 +29,39 @@ class UserOverrideRead(BaseModel):
     effect: OverrideEffect
 
 
+class BadgeRead(BaseModel):
+    id: str
+    code: str
+    label: str
+    description: str = ""
+    color: str = "#2563eb"
+    icon: str = "award"
+    logo_url: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class BadgeCreateRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9-]+$")
+    label: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=255)
+    color: str = Field(default="#2563eb", max_length=24)
+    icon: str = Field(default="award", max_length=60)
+    logo_url: str | None = Field(default=None, max_length=500)
+
+
+class BadgeUpdateRequest(BaseModel):
+    label: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=255)
+    color: str | None = Field(default=None, max_length=24)
+    icon: str | None = Field(default=None, max_length=60)
+    logo_url: str | None = Field(default=None, max_length=500)
+
+
+class UserBadgeAssignmentRequest(BaseModel):
+    badge_id: str
+
+
 class UserRead(BaseModel):
     id: str
     email: str
@@ -40,6 +73,7 @@ class UserRead(BaseModel):
     template_names: list[str] = []
     permissions: list[str] = []
     overrides: list[UserOverrideRead] = []
+    badges: list[BadgeRead] = []
     status_reason: str | None = None
     must_reset_password: bool = False
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { BookOpen, LayoutDashboard, FileText, Plus, LogOut, Lock, ListTree } from "lucide-react";
+import { Award, BookOpen, LayoutDashboard, FileText, Plus, LogOut, Lock, ListTree } from "lucide-react";
 import { parseSubtopics } from "../subtopics";
 
 interface Space {
@@ -18,6 +18,13 @@ interface UserProfile {
   full_name: string;
   permissions: string[];
   is_platform_admin: boolean;
+  badges?: {
+    id: string;
+    label: string;
+    description: string;
+    color: string;
+    logo_url?: string | null;
+  }[];
 }
 
 interface Page {
@@ -156,6 +163,16 @@ export default function Sidebar({
           <div className="user-info">
             <span className="user-name">{currentUser.full_name}</span>
             <span className="user-email">{currentUser.email}</span>
+            {!!currentUser.badges?.length && (
+              <div className="profile-badges">
+                {currentUser.badges.slice(0, 3).map((badge) => (
+                  <span className="profile-badge" style={{ borderColor: badge.color, color: badge.color }} title={badge.description} key={badge.id}>
+                    {badge.logo_url ? <img className="profile-badge-logo" src={badge.logo_url} alt="" /> : <Award size={11} />}
+                    {badge.label}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <button className="btn-logout" onClick={onLogout} title="Cerrar Sesión">
             <LogOut size={16} />

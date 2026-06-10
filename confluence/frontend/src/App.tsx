@@ -18,14 +18,14 @@ import { api, Comment, Page, Space, UserListItem, UserProfile } from "./api";
 export default function App() {
   // Auth states
   const [token, setToken] = useState<string | null>(() => {
-    const local = localStorage.getItem("gatewiki_token");
-    if (local) return local;
     const match = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/);
     if (match) {
-      const val = match[1];
+      const val = decodeURIComponent(match[1]);
       localStorage.setItem("gatewiki_token", val);
       return val;
     }
+    const local = localStorage.getItem("gatewiki_token");
+    if (local) return local;
     return null;
   });
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -152,6 +152,13 @@ export default function App() {
       }
     } catch (err) {
       localStorage.removeItem("gatewiki_token");
+      const sharedToken = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/)?.[1];
+      if (sharedToken && decodeURIComponent(sharedToken) !== jwtToken) {
+        const decodedToken = decodeURIComponent(sharedToken);
+        localStorage.setItem("gatewiki_token", decodedToken);
+        setToken(decodedToken);
+        return;
+      }
       setToken(null);
       setLoginError("Sesión inválida o conexión perdida con GateStack.");
     } finally {

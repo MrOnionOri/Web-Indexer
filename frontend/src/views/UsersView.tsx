@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
-import { CheckCircle2, Clock3, Eye, KeyRound, MoreHorizontal, Search, ShieldCheck, ShieldX, UserCog, Users } from "lucide-react";
-import { api, Me, Template, User } from "../api";
+import { Award, Bug, CheckCircle2, Clock3, Eye, FlaskConical, KeyRound, Medal, MoreHorizontal, Search, ShieldCheck, ShieldX, Sparkles, UserCog, Users } from "lucide-react";
+import { api, Me, Template, User, UserBadge } from "../api";
 import { EmptyState, initials, Metric, StatusBadge } from "../components/ui";
 
 export type UserViewMode = "permissions" | "crud";
@@ -9,6 +9,7 @@ export function UsersView({
   users,
   me,
   templates,
+  badges,
   allPermissions,
   viewMode,
   refresh,
@@ -16,6 +17,7 @@ export function UsersView({
   users: User[];
   me: Me;
   templates: Template[];
+  badges: UserBadge[];
   allPermissions: { id: string; code: string; description: string }[];
   viewMode: UserViewMode;
   refresh: () => void;
@@ -23,6 +25,14 @@ export function UsersView({
   const [query, setQuery] = useState("");
   const [templateSelection, setTemplateSelection] = useState<Record<string, string>>({});
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [badgeSelection, setBadgeSelection] = useState<Record<string, string>>({});
+  const [showBadgeForm, setShowBadgeForm] = useState(false);
+  const [badgeCode, setBadgeCode] = useState("");
+  const [badgeLabel, setBadgeLabel] = useState("");
+  const [badgeDescription, setBadgeDescription] = useState("");
+  const [badgeColor, setBadgeColor] = useState("#2563eb");
+  const [badgeIcon, setBadgeIcon] = useState("award");
+  const [badgeLogoUrl, setBadgeLogoUrl] = useState("");
 
   // CRUD Direct Add States
   const [showAddForm, setShowAddForm] = useState(false);
@@ -51,6 +61,7 @@ export function UsersView({
 
   const approvedAdminCount = users.filter((user) => user.is_platform_admin && user.status === "approved").length;
   const permissionGroups = groupPermissionsByApplication(allPermissions);
+  const canManageBadges = me.permissions.includes("users:badges") || me.is_platform_admin;
 
   function isProtectedAdminAction(user: User) {
     return user.id === me.id || (user.is_platform_admin && approvedAdminCount <= 1);
@@ -165,6 +176,51 @@ export function UsersView({
     }
   };
 
+  const handleCreateBadge = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      await api.createBadge(
+        badgeCode.trim().toLowerCase(),
+        badgeLabel.trim(),
+        badgeDescription.trim(),
+        badgeColor,
+        badgeIcon,
+        badgeLogoUrl.trim() || null,
+      );
+      setBadgeCode("");
+      setBadgeLabel("");
+      setBadgeDescription("");
+      setBadgeColor("#2563eb");
+      setBadgeIcon("award");
+      setBadgeLogoUrl("");
+      setShowBadgeForm(false);
+      refresh();
+    } catch (err: any) {
+      alert(err.message ?? "Error al crear badge");
+    }
+  };
+
+  const handleAssignBadge = async (user: User) => {
+    const badgeId = badgeSelection[user.id];
+    if (!badgeId) return;
+    try {
+      await api.assignBadge(user.id, badgeId);
+      setBadgeSelection((current) => ({ ...current, [user.id]: "" }));
+      refresh();
+    } catch (err: any) {
+      alert(err.message ?? "Error al asignar badge");
+    }
+  };
+
+  const handleRemoveBadge = async (user: User, badgeId: string) => {
+    try {
+      await api.removeBadge(user.id, badgeId);
+      refresh();
+    } catch (err: any) {
+      alert(err.message ?? "Error al quitar badge");
+    }
+  };
+
   const openSanctionModal = (user: User) => {
     setSanctioningUser(user);
     setSanctionStatus("suspended");
@@ -194,6 +250,58 @@ export function UsersView({
           )}
         </div>
 
+        {canManageBadges && viewMode === "permissions" && (
+          <section className="badge-admin-panel">
+            <div className="split-toolbar">
+              <div>
+                <h3>Badges de identidad</h3>
+                <p className="toolbar-note">Crea insignias como Pen tester, Beta tester o Security reviewer y asignalas a usuarios.</p>
+              </div>
+              <button className="secondary-action compact" type="button" onClick={() => setShowBadgeForm((value) => !value)}>
+                <Award />
+                {showBadgeForm ? "Cerrar" : "Crear badge"}
+              </button>
+            </div>
+            {showBadgeForm && (
+              <form className="badge-form" onSubmit={handleCreateBadge}>
+                <input value={badgeLabel} onChange={(event) => setBadgeLabel(event.target.value)} placeholder="Pen tester" required minLength={2} />
+                <input value={badgeCode} onChange={(event) => setBadgeCode(event.target.value)} placeholder="pen-tester" required pattern="[a-z0-9-]+" />
+                <input value={badgeDescription} onChange={(event) => setBadgeDescription(event.target.value)} placeholder="Participó en pruebas de seguridad" />
+                <div className="badge-icon-palette" role="radiogroup" aria-label="Icono del badge">
+                  {BADGE_ICON_OPTIONS.map((option) => {
+                    const Icon = option.Icon;
+                    return (
+                      <button
+                        className={`badge-icon-option ${badgeIcon === option.value ? "active" : ""}`}
+                        type="button"
+                        title={option.label}
+                        aria-label={option.label}
+                        aria-pressed={badgeIcon === option.value}
+                        onClick={() => setBadgeIcon(option.value)}
+                        key={option.value}
+                      >
+                        <Icon />
+                      </button>
+                    );
+                  })}
+                </div>
+                <input value={badgeLogoUrl} onChange={(event) => setBadgeLogoUrl(event.target.value)} placeholder="Logo URL opcional" type="url" />
+                <input value={badgeColor} onChange={(event) => setBadgeColor(event.target.value)} type="color" title="Color del badge" />
+                <button className="primary compact">Guardar badge</button>
+              </form>
+            )}
+            <div className="identity-badges-list">
+              {badges.length === 0 && <span className="toolbar-note">Todavia no hay badges creados.</span>}
+              {badges.map((badge) => (
+                <span className="identity-badge" style={{ borderColor: badge.color, color: badge.color }} key={badge.id}>
+                  <BadgeMark badge={badge} />
+                  {badge.label}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
         {filteredUsers.length === 0 && <EmptyState text="No hay usuarios que coincidan con la búsqueda." />}
 
         {/* View Mode 1: Permissions Management */}
@@ -220,6 +328,12 @@ export function UsersView({
                       <strong>{user.full_name}</strong>
                       {user.id === me.id && <span className="self-badge">Tu cuenta</span>}
                       {user.is_platform_admin && <span className="admin-badge">Platform admin</span>}
+                      {user.badges.map((badge) => (
+                        <span className="identity-badge tiny" style={{ borderColor: badge.color, color: badge.color }} title={badge.description} key={badge.id}>
+                          <BadgeMark badge={badge} />
+                          {badge.label}
+                        </span>
+                      ))}
                     </div>
                     <span>{user.email}</span>
                     <div className="chips compact">
@@ -255,6 +369,31 @@ export function UsersView({
                     Aplicar
                   </button>
                 </div>
+
+                {canManageBadges && (
+                  <div className="badge-controls">
+                    <select
+                      value={badgeSelection[user.id] ?? ""}
+                      onChange={(event) => setBadgeSelection((current) => ({ ...current, [user.id]: event.target.value }))}
+                    >
+                      <option value="">Asignar badge</option>
+                      {badges
+                        .filter((badge) => !user.badges.some((assigned) => assigned.id === badge.id))
+                        .map((badge) => (
+                          <option value={badge.id} key={badge.id}>{badge.label}</option>
+                        ))}
+                    </select>
+                    <button className="secondary-action compact" onClick={() => handleAssignBadge(user)} disabled={!badgeSelection[user.id]}>
+                      <Award />
+                      Asignar
+                    </button>
+                    {user.badges.map((badge) => (
+                      <button className="icon-action soft-danger" title={`Quitar ${badge.label}`} key={badge.id} onClick={() => handleRemoveBadge(user, badge.id)}>
+                        ×
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <UserActionMenu
                   user={user}
@@ -423,6 +562,12 @@ export function UsersView({
                         <strong>{user.full_name}</strong>
                         {user.id === me.id && <span className="self-badge">Tu cuenta</span>}
                         {user.is_platform_admin && <span className="admin-badge">Platform admin</span>}
+                        {user.badges.map((badge) => (
+                          <span className="identity-badge tiny" style={{ borderColor: badge.color, color: badge.color }} title={badge.description} key={badge.id}>
+                            <BadgeMark badge={badge} />
+                            {badge.label}
+                          </span>
+                        ))}
                       </div>
                       <span>{user.email}</span>
                       {user.status_reason && (
@@ -674,6 +819,32 @@ function UserActionMenu({
 }
 
 type PermissionItem = { id: string; code: string; description: string };
+
+const BADGE_ICON_OPTIONS = [
+  { value: "award", label: "Award", Icon: Award },
+  { value: "shield", label: "Shield", Icon: ShieldCheck },
+  { value: "bug", label: "Bug", Icon: Bug },
+  { value: "flask", label: "Beta", Icon: FlaskConical },
+  { value: "medal", label: "Medal", Icon: Medal },
+  { value: "sparkles", label: "Special", Icon: Sparkles },
+];
+
+function BadgeMark({ badge }: { badge: UserBadge }) {
+  if (badge.logo_url) {
+    return <img className="identity-badge-logo" src={badge.logo_url} alt="" />;
+  }
+
+  const icons = {
+    award: Award,
+    shield: ShieldCheck,
+    bug: Bug,
+    flask: FlaskConical,
+    medal: Medal,
+    sparkles: Sparkles,
+  };
+  const Icon = icons[badge.icon as keyof typeof icons] ?? Award;
+  return <Icon />;
+}
 
 function groupPermissionsByApplication(permissions: PermissionItem[]) {
   const labels: Record<string, string> = {
