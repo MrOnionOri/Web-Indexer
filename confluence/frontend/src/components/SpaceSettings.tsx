@@ -272,17 +272,17 @@ export default function SpaceSettings({
                 </label>
               </div>
               <p className="text-small text-muted" style={{ fontSize: "12px", marginTop: "4px", color: "var(--color-text-muted)" }}>
-                Si se activa, solo tú, los administradores y los usuarios que agregues abajo podrán ingresar.
+                Si se activa, solo tu, los administradores y los miembros podran ingresar. Si esta publico, todos pueden verlo, pero solo miembros pueden colaborar.
               </p>
-              {editSpaceIsRestricted && (
+              {true && (
                 <div className="form-group" style={{ marginTop: "12px" }}>
-                  <label>Miembros Autorizados</label>
+                  <label>Miembros del workspace</label>
                   
                   <div className="allowed-emails-tags" style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px", marginTop: "8px" }}>
                     {(() => {
                       const emails = editSpaceAllowedEmails.split(",").map(e => e.trim()).filter(Boolean);
                       if (emails.length === 0) {
-                        return <span style={{ fontSize: "12px", fontStyle: "italic", color: "var(--color-text-muted)" }}>Agrega usuarios autorizados a la lista.</span>;
+                        return <span style={{ fontSize: "12px", fontStyle: "italic", color: "var(--color-text-muted)" }}>Agrega miembros a la lista.</span>;
                       }
                       return emails.map(email => {
                         const userObj = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
@@ -478,3 +478,4 @@ export default function SpaceSettings({
     </div>
   );
 }
+

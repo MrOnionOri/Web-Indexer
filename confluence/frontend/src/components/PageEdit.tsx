@@ -1,4 +1,4 @@
-﻿import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
 import MarkdownEditor, { EditorMode } from "./MarkdownEditor";
 import { parseSubtopics, serializeSubtopics, SubtopicItem } from "../subtopics";
@@ -131,14 +131,14 @@ export default function PageEdit({
   return (
     <div className="subview">
       <div className="edit-view-header">
-        <h1>{editPageId ? "Editar PÃ¡gina de Conocimiento" : "Crear Nueva PÃ¡gina"}</h1>
+        <h1>{editPageId ? "Editar Página de Conocimiento" : "Crear Nueva Página"}</h1>
         <p>Crea o actualiza el contenido principal del tema dentro del workspace.</p>
       </div>
 
       <form onSubmit={onSubmit} className="edit-form-card">
         <div className="form-row">
           <div className="form-group flex-2">
-            <label>TÃ­tulo del tema</label>
+            <label>Título del tema</label>
             <input
               type="text"
               placeholder="Ej: Server API"
@@ -173,7 +173,6 @@ export default function PageEdit({
             textareaId="edit-page-content-input"
             rows={15}
             placeholder="Escribe aqui en formato Markdown..."
-            required
             emptyTitle="Empieza tu pagina"
             emptyMessage="Escribe en Markdown y veras el resultado aqui en tiempo real."
           />
@@ -254,9 +253,9 @@ export default function PageEdit({
                 checked={editPageIsRestricted}
                 onChange={(e) => setEditPageIsRestricted(e.target.checked)}
               />
-              <label htmlFor="restrict-visibility-checkbox"><strong>Restringir acceso a esta pÃ¡gina</strong></label>
+              <label htmlFor="restrict-visibility-checkbox"><strong>Restringir acceso a esta página</strong></label>
             </div>
-            <p className="text-small text-muted">Si se activa, solo tÃº (el creador), los administradores de GateWiki y los usuarios autorizados de la lista podrÃ¡n ver esta pÃ¡gina.</p>
+            <p className="text-small text-muted">Si se activa, solo tú (el creador), los administradores de GateWiki y los usuarios autorizados de la lista podrán ver esta página.</p>
           </div>
           {editPageIsRestricted && (
             <div className="form-group" style={{ marginTop: "12px" }}>
@@ -372,9 +371,9 @@ export default function PageEdit({
                 checked={editPageCommentsAllowed}
                 onChange={(e) => setEditPageCommentsAllowed(e.target.checked)}
               />
-              <label htmlFor="allow-comments-checkbox"><strong>Permitir comentarios en esta pÃ¡gina</strong></label>
+              <label htmlFor="allow-comments-checkbox"><strong>Permitir comentarios en esta página</strong></label>
             </div>
-            <p className="text-small text-muted">Si se activa, todos los usuarios con acceso a esta pÃ¡gina podrÃ¡n ver y escribir comentarios.</p>
+            <p className="text-small text-muted">Si se activa, todos los usuarios con acceso a esta página podrán ver y escribir comentarios.</p>
           </div>
         </div>
 
@@ -384,7 +383,7 @@ export default function PageEdit({
           </button>
           <button type="submit" className="btn-primary">
             <Save size={16} />
-            <span>Guardar PÃ¡gina</span>
+            <span>Guardar Página</span>
           </button>
         </div>
       </form>

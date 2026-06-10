@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { ArrowLeft, Lock, Globe, Edit3, Trash2, MessageSquare, Send } from "lucide-react";
 import { parseSubtopics } from "../subtopics";
 
@@ -62,7 +62,7 @@ interface PageReadProps {
   renderMarkdown: (md: string) => React.ReactNode;
 }
 
-const EMOJI_LIST = ["ðŸ‘", "â¤ï¸", "ðŸ˜‚", "ðŸ˜®", "ðŸ˜¢", "ðŸ™"];
+const EMOJI_LIST = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
 
 export default function PageRead({
   currentUser,
@@ -190,7 +190,7 @@ export default function PageRead({
             <span className="space-badge">{activePage.space_key}</span>
             {isSubtopicView && <span className="space-badge subtle">Tema: {activePage.title}</span>}
             <span className={`page-privacy ${activePage.is_restricted ? "text-muted" : "text-success"}`}>
-              {activePage.is_restricted ? <><Lock size={12} /> Restringido</> : <><Globe size={12} /> PÃºblico</>}
+              {activePage.is_restricted ? <><Lock size={12} /> Restringido</> : <><Globe size={12} /> Público</>}
             </span>
           </div>
           <h1 className="page-title">{displayTitle}</h1>
@@ -219,7 +219,7 @@ export default function PageRead({
 
         <div className="page-content">
           {displayContent ? renderMarkdown(displayContent) : (
-            <p className="text-muted">Sin informaciÃƒÂ³n adicional.</p>
+            <p className="text-muted">Sin información adicional.</p>
           )}
         </div>
 
@@ -227,13 +227,13 @@ export default function PageRead({
           <div className="alert-box info-alert" style={{ marginBottom: "24px" }}>
             <Lock size={18} />
             <div>
-              <strong>PÃ¡gina Restringida:</strong> Esta pÃ¡gina tiene lÃ­mites de visibilidad. Solo puede ser vista por el creador y los siguientes correos:
+              <strong>Página Restringida:</strong> Esta página tiene límites de visibilidad. Solo puede ser vista por el creador y los siguientes correos:
               <span style={{ marginLeft: "8px", fontWeight: "bold" }}>{activePage.allowed_emails || currentUser.email}</span>
             </div>
           </div>
         )}
 
-        {/* SecciÃ³n de comentarios premium */}
+        {/* Sección de comentarios premium */}
         <section className="comments-section">
           <div className="comments-section-header">
             <MessageSquare size={16} />
@@ -242,7 +242,7 @@ export default function PageRead({
 
           <div className="comment-list">
             {parentComments.length === 0 ? (
-              <p className="no-comments-msg">No hay comentarios en esta pÃ¡gina aÃºn. Â¡SÃ© el primero en participar!</p>
+              <p className="no-comments-msg">No hay comentarios en esta página aún. ¡Sé el primero en participar!</p>
             ) : (
               parentComments.map((comment) => {
                 const isCommentAuthor = comment.author_id === currentUser.id;
@@ -267,7 +267,7 @@ export default function PageRead({
                               type="button"
                               className="comment-delete-btn"
                               onClick={() => {
-                                if (confirm("Â¿EstÃ¡s seguro de que deseas eliminar este comentario y todas sus respuestas?")) {
+                                if (confirm("¿Estás seguro de que deseas eliminar este comentario y todas sus respuestas?")) {
                                   onDeleteComment(comment.id);
                                 }
                               }}
@@ -282,7 +282,7 @@ export default function PageRead({
                         {/* Fila de reacciones */}
                         {renderReactions(comment)}
 
-                        {/* BotÃ³n de Respuesta */}
+                        {/* Botón de Respuesta */}
                         {activePage.comments_allowed && (
                           <button
                             type="button"
@@ -324,7 +324,7 @@ export default function PageRead({
                                       type="button"
                                       className="comment-delete-btn"
                                       onClick={() => {
-                                        if (confirm("Â¿EstÃ¡s seguro de que deseas eliminar esta respuesta?")) {
+                                        if (confirm("¿Estás seguro de que deseas eliminar esta respuesta?")) {
                                           onDeleteComment(reply.id);
                                         }
                                       }}
@@ -442,7 +442,7 @@ export default function PageRead({
           ) : (
             <div className="comments-disabled-alert">
               <Lock size={14} style={{ marginRight: "6px", opacity: 0.8 }} />
-              <span>Los comentarios estÃ¡n desactivados para esta pÃ¡gina.</span>
+              <span>Los comentarios están desactivados para esta página.</span>
             </div>
           )}
         </section>

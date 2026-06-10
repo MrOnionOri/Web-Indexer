@@ -13,16 +13,17 @@ from fastapi.responses import FileResponse
 
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, text, ForeignKey
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-# ----------------- CONFIGURACIÓN & DB (MySQL) -----------------
+# ----------------- CONFIGURACIÃ“N & DB (MySQL) -----------------
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 
-# URL-escape para caracteres especiales en la contraseña (ej: @, /)
+# URL-escape para caracteres especiales en la contraseÃ±a (ej: @, /)
 user_escaped = quote_plus(DB_USER)
 password_escaped = quote_plus(DB_PASSWORD)
 DATABASE_URL = f"mysql+pymysql://{user_escaped}:{password_escaped}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -75,8 +76,8 @@ class PageModel(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     space_key = Column(String(20), nullable=False, index=True)
     title = Column(String(180), nullable=False)
-    content = Column(Text, default="")
-    subtopics = Column(Text, default="", nullable=True)
+    content = Column(LONGTEXT, default="")
+    subtopics = Column(LONGTEXT, default="", nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
     created_by_email = Column(String(255), nullable=False)
     created_by_name = Column(String(160), nullable=False)
@@ -158,6 +159,8 @@ def init_db_for_local_dev() -> None:
                 conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN subtopics TEXT NULL"))
             if "sort_order" not in existing_p_cols:
                 conn.execute(text("ALTER TABLE confluence_pages ADD COLUMN sort_order INT NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE confluence_pages MODIFY COLUMN content LONGTEXT NULL"))
+            conn.execute(text("ALTER TABLE confluence_pages MODIFY COLUMN subtopics LONGTEXT NULL"))
                 
             c_result = conn.execute(text("SHOW COLUMNS FROM confluence_comments"))
             existing_c_cols = {row[0] for row in c_result.fetchall()}
@@ -171,7 +174,7 @@ def init_db_for_local_dev() -> None:
                 
             conn.commit()
     except Exception as e:
-        print("Nota: Error durante la migración de columnas:", e)
+        print("Nota: Error durante la migraciÃ³n de columnas:", e)
 
 
 if os.getenv("GATEWIKI_SKIP_DB_INIT") != "1":
@@ -296,7 +299,7 @@ class StorageRequestCreate(BaseModel):
     requested_gb: int
     reason: str = ""
 
-# ----------------- SEGURIDAD & INTEGRACIÓN SSO -----------------
+# ----------------- SEGURIDAD & INTEGRACIÃ“N SSO -----------------
 security = HTTPBearer()
 
 def get_db():
@@ -322,7 +325,7 @@ def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials
             
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token inválido o el servicio central de GateStack IAM no está disponible."
+        detail="Token invÃ¡lido o el servicio central de GateStack IAM no estÃ¡ disponible."
     )
 
 def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
@@ -346,14 +349,14 @@ def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
     ]))
 
 def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, **kwargs):
-    last_error = "GateStack IAM no está disponible."
+    last_error = "GateStack IAM no estÃ¡ disponible."
     for base_url in get_gatestack_urls(request):
         try:
             response = requests.request(method, f"{base_url}{path}", timeout=4.0, **kwargs)
             try:
                 payload = response.json()
             except ValueError:
-                payload = {"detail": response.text or "Respuesta inválida de GateStack IAM."}
+                payload = {"detail": response.text or "Respuesta invÃ¡lida de GateStack IAM."}
 
             if response.status_code >= 400:
                 detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
@@ -411,6 +414,21 @@ def forward_gatestorage_request(method: str, path: str, request: Request, **kwar
             continue
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
 
+
+def sync_gatestorage_workspace_members(space: SpaceModel, request: Request) -> None:
+    try:
+        forward_gatestorage_request(
+            "PUT",
+            f"/api/workspaces/gatewiki/{space.key.upper()}/members",
+            request=request,
+            json={"member_emails": allowed_email_list(space.allowed_emails)},
+        )
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            print("Nota: no se pudieron sincronizar miembros con GateStorage:", exc.detail)
+    except Exception as exc:
+        print("Nota: no se pudieron sincronizar miembros con GateStorage:", exc)
+
 def check_permission(user: dict, required_permission: str):
     permissions = user.get("permissions", [])
     is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in permissions
@@ -446,6 +464,22 @@ def is_admin_user(user: dict) -> bool:
 def allowed_email_list(value: Optional[str]) -> List[str]:
     return [email.strip().lower() for email in (value or "").split(",") if email.strip()]
 
+def is_workspace_member(space: SpaceModel | None, user: dict) -> bool:
+    if not space:
+        return False
+    if is_admin_user(user):
+        return True
+    user_email = user.get("email", "").lower()
+    user_id = user.get("id", "")
+    return space.created_by_id == user_id or user_email in allowed_email_list(space.allowed_emails)
+
+def ensure_workspace_member(space: SpaceModel | None, user: dict, action: str) -> None:
+    if not is_workspace_member(space, user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Solo los miembros del workspace pueden {action}."
+        )
+
 def ensure_page_access(page: PageModel, db: Session, user: dict, action: str = "visualizar") -> SpaceModel | None:
     space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
     is_admin = is_admin_user(user)
@@ -453,12 +487,12 @@ def ensure_page_access(page: PageModel, db: Session, user: dict, action: str = "
     user_id = user.get("id", "")
 
     if space and space.is_restricted:
-        if not (is_admin or space.created_by_id == user_id or user_email in allowed_email_list(space.allowed_emails)):
+        if not is_workspace_member(space, user):
             raise HTTPException(status_code=403, detail=f"No tienes acceso para {action} contenido de este espacio de trabajo.")
 
     if page.is_restricted:
         if not (is_admin or page.created_by_id == user_id or user_email in allowed_email_list(page.allowed_emails)):
-            raise HTTPException(status_code=403, detail=f"No tienes acceso para {action} esta pÃ¡gina privada.")
+            raise HTTPException(status_code=403, detail=f"No tienes acceso para {action} esta pÃƒÂ¡gina privada.")
 
     return space
 
@@ -558,7 +592,7 @@ def get_spaces(db: Session = Depends(get_db), user: dict = Depends(get_current_u
     return visible_spaces
 
 @app.post("/api/spaces", response_model=SpaceRead)
-def create_space(space: SpaceCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def create_space(space: SpaceCreate, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:create_workspace")
     
     existing = db.query(SpaceModel).filter((SpaceModel.key == space.key.upper()) | (SpaceModel.name == space.name)).first()
@@ -578,10 +612,11 @@ def create_space(space: SpaceCreate, db: Session = Depends(get_db), user: dict =
     db.add(db_space)
     db.commit()
     db.refresh(db_space)
+    sync_gatestorage_workspace_members(db_space, request)
     return db_space
 
 @app.put("/api/spaces/{space_id}", response_model=SpaceRead)
-def update_space(space_id: str, payload: SpaceCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def update_space(space_id: str, payload: SpaceCreate, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:edit_workspace")
     
     space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
@@ -610,6 +645,7 @@ def update_space(space_id: str, payload: SpaceCreate, db: Session = Depends(get_
     
     db.commit()
     db.refresh(space)
+    sync_gatestorage_workspace_members(space, request)
     return space
 
 @app.delete("/api/spaces/{space_id}", status_code=204)
@@ -639,8 +675,8 @@ def get_space_storage(space_id: str, request: Request, db: Session = Depends(get
     if not space:
         raise HTTPException(status_code=404, detail="Espacio no encontrado.")
 
-    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
-        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede ver el storage de este workspace.")
+    if not is_workspace_member(space, user):
+        raise HTTPException(status_code=403, detail="Solo los miembros del workspace pueden ver el storage de este workspace.")
 
     return forward_gatestorage_request("GET", f"/api/workspaces/gatewiki/{space.key.upper()}", request=request)
 
@@ -650,8 +686,8 @@ def get_space_storage_request(space_id: str, request: Request, db: Session = Dep
     space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
     if not space:
         raise HTTPException(status_code=404, detail="Workspace no encontrado.")
-    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
-        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede ver solicitudes de storage.")
+    if not is_workspace_member(space, user):
+        raise HTTPException(status_code=403, detail="Solo los miembros del workspace pueden ver solicitudes de storage.")
 
     return forward_gatestorage_request("GET", f"/api/storage-requests/gatewiki/{space.key.upper()}/latest", request=request)
 
@@ -669,8 +705,8 @@ def request_space_storage(
     if not space:
         raise HTTPException(status_code=404, detail="Espacio no encontrado.")
 
-    if not (is_admin_user(user) or space.created_by_id == user.get("id")):
-        raise HTTPException(status_code=403, detail="Solo el dueno del workspace o un admin puede solicitar storage.")
+    if not is_workspace_member(space, user):
+        raise HTTPException(status_code=403, detail="Solo los miembros del workspace pueden solicitar storage.")
 
     requested_bytes = payload.requested_gb * 1024 * 1024 * 1024
     return forward_gatestorage_request(
@@ -684,11 +720,12 @@ def request_space_storage(
             "workspace_name": space.name,
             "requested_bytes": requested_bytes,
             "reason": payload.reason,
+            "member_emails": allowed_email_list(space.allowed_emails),
         },
     )
 
 
-# --- Páginas ---
+# --- PÃ¡ginas ---
 @app.get("/api/pages", response_model=List[PageRead])
 def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:view")
@@ -711,7 +748,7 @@ def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), us
     if not visible_space_keys:
         return []
         
-    # 2. Filtrar las páginas de la base de datos
+    # 2. Filtrar las pÃ¡ginas de la base de datos
     query = db.query(PageModel)
     if space_key:
         if space_key.upper() not in visible_space_keys:
@@ -722,7 +759,7 @@ def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), us
         
     pages = query.order_by(PageModel.sort_order.asc(), PageModel.created_at.desc()).all()
     
-    # 3. Filtrar a nivel de página (páginas restringidas individualmente)
+    # 3. Filtrar a nivel de pÃ¡gina (pÃ¡ginas restringidas individualmente)
     visible_pages = []
     for page in pages:
         if not page.is_restricted:
@@ -740,9 +777,9 @@ def get_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(g
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada")
         
-    # Verificar acceso al Espacio de la página
+    # Verificar acceso al Espacio de la pÃ¡gina
     space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
     is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
     user_email = user.get("email", "").lower()
@@ -751,13 +788,13 @@ def get_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(g
     if space and space.is_restricted:
         allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
         if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta página.")
+            raise HTTPException(status_code=403, detail="No tienes acceso al espacio de trabajo de esta pÃ¡gina.")
             
-    # Verificar acceso a la página privada en sí
+    # Verificar acceso a la pÃ¡gina privada en sÃ­
     if page.is_restricted:
         allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
         if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta página privada.")
+            raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta pÃ¡gina privada.")
             
     return page
 
@@ -774,10 +811,7 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
     user_email = user.get("email", "").lower()
     user_id = user.get("id", "")
     
-    if space.is_restricted:
-        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No puedes crear páginas en un espacio de trabajo restringido en el que no estás autorizado.")
+    ensure_workspace_member(space, user, "crear paginas en este workspace")
             
     next_sort_order = (db.query(PageModel).filter(PageModel.space_key == page.space_key.upper()).count() + 1) * 10
     db_page = PageModel(
@@ -804,30 +838,23 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada")
         
-    # Verificar si el usuario tiene acceso al espacio actual de la página
+    # Verificar si el usuario tiene acceso al espacio actual de la pÃ¡gina
     space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
     is_admin = user.get("is_platform_admin", False) or "gatewiki:admin" in user.get("permissions", [])
     user_email = user.get("email", "").lower()
     user_id = user.get("id", "")
     
-    if space and space.is_restricted:
-        allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
-        if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso para modificar páginas en este espacio de trabajo.")
+    ensure_workspace_member(space, user, "modificar paginas en este workspace")
             
     # Verificar si el usuario tiene acceso al espacio destino (en caso de moverla)
     if payload.space_key.upper() != page.space_key.upper():
         dest_space = db.query(SpaceModel).filter(SpaceModel.key == payload.space_key.upper()).first()
         if not dest_space:
             raise HTTPException(status_code=404, detail="El espacio destino no existe.")
-        if dest_space.is_restricted:
-            allowed_list = [email.strip().lower() for email in (dest_space.allowed_emails or "").split(",") if email.strip()]
-            if not (is_admin or dest_space.created_by_id == user_id or user_email in allowed_list):
-                raise HTTPException(status_code=403, detail="No tienes acceso para mover páginas al espacio de trabajo de destino.")
-                
-    # Verificar si es el dueño, admin o tiene permisos de edición
+        ensure_workspace_member(dest_space, user, "mover paginas a este workspace")
+    # Verificar si es el dueÃ±o, admin o tiene permisos de ediciÃ³n
     if not (is_admin or page.created_by_id == user.get("id")):
         check_permission(user, "gatewiki:edit_page")
         
@@ -868,7 +895,7 @@ def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depend
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada")
         
     # Verificar si tiene acceso al espacio
     space = db.query(SpaceModel).filter(SpaceModel.key == page.space_key.upper()).first()
@@ -879,9 +906,9 @@ def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depend
     if space and space.is_restricted:
         allowed_list = [email.strip().lower() for email in (space.allowed_emails or "").split(",") if email.strip()]
         if not (is_admin or space.created_by_id == user_id or user_email in allowed_list):
-            raise HTTPException(status_code=403, detail="No tienes acceso para eliminar páginas en este espacio de trabajo.")
+            raise HTTPException(status_code=403, detail="No tienes acceso para eliminar pÃ¡ginas en este espacio de trabajo.")
             
-    # Solo el dueño o admins pueden borrar, o cualquier gatewiki:delete
+    # Solo el dueÃ±o o admins pueden borrar, o cualquier gatewiki:delete
     if not (is_admin or page.created_by_id == user.get("id")):
         check_permission(user, "gatewiki:delete_page")
         
@@ -898,7 +925,7 @@ def get_comments(page_id: str, db: Session = Depends(get_db), user: dict = Depen
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada.")
 
     ensure_page_access(page, db, user)
             
@@ -914,12 +941,13 @@ def create_comment(page_id: str, payload: CommentCreate, db: Session = Depends(g
     
     page = db.query(PageModel).filter(PageModel.id == page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada.")
         
     if not page.comments_allowed:
-        raise HTTPException(status_code=400, detail="Los comentarios están desactivados para esta página.")
+        raise HTTPException(status_code=400, detail="Los comentarios estÃ¡n desactivados para esta pÃ¡gina.")
 
-    ensure_page_access(page, db, user, "comentar")
+    space = ensure_page_access(page, db, user, "comentar")
+    ensure_workspace_member(space, user, "comentar en este workspace")
             
     # Validar parent_id
     if payload.parent_id:
@@ -927,9 +955,9 @@ def create_comment(page_id: str, payload: CommentCreate, db: Session = Depends(g
         if not parent:
             raise HTTPException(status_code=404, detail="Comentario principal no encontrado.")
         if parent.page_id != page_id:
-            raise HTTPException(status_code=400, detail="El comentario principal no pertenece a esta página.")
+            raise HTTPException(status_code=400, detail="El comentario principal no pertenece a esta pÃ¡gina.")
         if parent.parent_id:
-            raise HTTPException(status_code=400, detail="No se permiten hilos de discusión de más de 1 nivel.")
+            raise HTTPException(status_code=400, detail="No se permiten hilos de discusiÃ³n de mÃ¡s de 1 nivel.")
             
     db_comment = CommentModel(
         page_id=page_id,
@@ -959,14 +987,14 @@ def toggle_reaction(comment_id: str, payload: ReactionPayload, db: Session = Dep
 
     page = db.query(PageModel).filter(PageModel.id == comment.page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada.")
     ensure_page_access(page, db, user, "reaccionar a")
         
     user_id = user.get("id")
     user_name = user.get("full_name")
     emoji = payload.emoji.strip()
     if not emoji or len(emoji) > 10:
-        raise HTTPException(status_code=400, detail="Reacción inválida.")
+        raise HTTPException(status_code=400, detail="ReacciÃ³n invÃ¡lida.")
     
     # Comprobar si ya existe
     existing = db.query(CommentReactionModel).filter(
@@ -1002,7 +1030,7 @@ def delete_comment(comment_id: str, db: Session = Depends(get_db), user: dict = 
         
     page = db.query(PageModel).filter(PageModel.id == comment.page_id).first()
     if not page:
-        raise HTTPException(status_code=404, detail="Página no encontrada.")
+        raise HTTPException(status_code=404, detail="PÃ¡gina no encontrada.")
 
     ensure_page_access(page, db, user, "eliminar comentarios de")
     is_admin = is_admin_user(user)
@@ -1025,9 +1053,9 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
     check_permission(user, "gatewiki:admin")
     
     spaces_data = [
-        {"name": "Ingeniería de Software", "key": "ENG", "description": "Estándares de desarrollo, arquitecturas y guías de codificación."},
-        {"name": "Diseño UX/UI", "key": "DSN", "description": "Guías de diseño, componentes visuales e identidad de marca."},
-        {"name": "IAM Integraciones", "key": "IAM", "description": "Información técnica sobre el portal de permisos de GateStack."}
+        {"name": "IngenierÃ­a de Software", "key": "ENG", "description": "EstÃ¡ndares de desarrollo, arquitecturas y guÃ­as de codificaciÃ³n."},
+        {"name": "DiseÃ±o UX/UI", "key": "DSN", "description": "GuÃ­as de diseÃ±o, componentes visuales e identidad de marca."},
+        {"name": "IAM Integraciones", "key": "IAM", "description": "InformaciÃ³n tÃ©cnica sobre el portal de permisos de GateStack."}
     ]
     
     created_spaces = 0
@@ -1043,21 +1071,21 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
         {
             "space_key": "ENG",
             "title": "Arquitectura Microservicios del Ecosistema",
-            "content": "# Arquitectura de Servicios\n\nTodos los servicios satélites del ecosistema deben integrarse a través de **GateStack IAM**.\n\n## Requisitos Básicos\n1. Validar el token JWT en cada petición.\n2. Cumplir con la matriz de permisos.\n3. Implementar un fallback elegante de base de datos.",
+            "content": "# Arquitectura de Servicios\n\nTodos los servicios satÃ©lites del ecosistema deben integrarse a travÃ©s de **GateStack IAM**.\n\n## Requisitos BÃ¡sicos\n1. Validar el token JWT en cada peticiÃ³n.\n2. Cumplir con la matriz de permisos.\n3. Implementar un fallback elegante de base de datos.",
             "is_restricted": False,
             "allowed_emails": ""
         },
         {
             "space_key": "IAM",
-            "title": "Manual de Integración Single Sign-On (SSO)",
-            "content": "# Integración con GateStack SSO\n\nPara validar tokens, debes llamar al endpoint `/auth/me` con la cabecera `Authorization: Bearer <JWT>`.\n\n```python\n# Ejemplo Python\nresponse = requests.get('http://host.docker.internal:8000/auth/me', headers=headers)\n```",
+            "title": "Manual de IntegraciÃ³n Single Sign-On (SSO)",
+            "content": "# IntegraciÃ³n con GateStack SSO\n\nPara validar tokens, debes llamar al endpoint `/auth/me` con la cabecera `Authorization: Bearer <JWT>`.\n\n```python\n# Ejemplo Python\nresponse = requests.get('http://host.docker.internal:8000/auth/me', headers=headers)\n```",
             "is_restricted": False,
             "allowed_emails": ""
         },
         {
             "space_key": "ENG",
             "title": "[PRIVADO] Ejemplo de Procedimiento de Despliegue",
-            "content": "# Procedimiento Privado de Despliegue\n\n> [!CAUTION]\n> Esta página es solo un ejemplo de contenido restringido para pruebas.\n\n* **Entorno:** `staging`\n* **Responsable:** Equipo de plataforma\n* **Notas:** No guardes credenciales reales dentro de GateWiki.",
+            "content": "# Procedimiento Privado de Despliegue\n\n> [!CAUTION]\n> Esta pÃ¡gina es solo un ejemplo de contenido restringido para pruebas.\n\n* **Entorno:** `staging`\n* **Responsable:** Equipo de plataforma\n* **Notas:** No guardes credenciales reales dentro de GateWiki.",
             "is_restricted": True,
             "allowed_emails": "admin@gatestack.dev"
         }
@@ -1081,9 +1109,9 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
             created_pages += 1
             
     db.commit()
-    return {"message": f"Datos cargados: {created_spaces} espacios y {created_pages} páginas creadas."}
+    return {"message": f"Datos cargados: {created_spaces} espacios y {created_pages} pÃ¡ginas creadas."}
 
-# Servir archivos estáticos específicos y fallback para la SPA (React Routing)
+# Servir archivos estÃ¡ticos especÃ­ficos y fallback para la SPA (React Routing)
 @app.get("/{path_name:path}")
 async def serve_static_or_spa(path_name: str):
     # Evitar interceptar peticiones de la API que no existen

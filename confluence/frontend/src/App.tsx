@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo, FormEvent } from "react";
+import React, { useState, useEffect, useMemo, FormEvent } from "react";
 import { X } from "lucide-react";
 
 // Import modular components
@@ -122,7 +122,7 @@ export default function App() {
     }
   }, [currentUser, token]);
 
-  // Sincronizar campos de ediciÃ³n de espacio en vista de configuraciÃ³n
+  // Sincronizar campos de edición de espacio en vista de configuración
   useEffect(() => {
     if (currentView === "space-settings" && activeSpaceFilter && spaces.length > 0) {
       const spaceObj = spaces.find(s => s.key.toUpperCase() === activeSpaceFilter.toUpperCase());
@@ -153,7 +153,7 @@ export default function App() {
     } catch (err) {
       localStorage.removeItem("gatewiki_token");
       setToken(null);
-      setLoginError("SesiÃ³n invÃ¡lida o conexiÃ³n perdida con GateStack.");
+      setLoginError("Sesión inválida o conexión perdida con GateStack.");
     } finally {
       setInitialLoading(false);
     }
@@ -288,7 +288,7 @@ export default function App() {
         await fetchComments(activePage.id);
       }
     } catch (err: any) {
-      alert(err.message || "Error al procesar reacciÃ³n.");
+      alert(err.message || "Error al procesar reacción.");
     }
   };
 
@@ -328,10 +328,10 @@ export default function App() {
     try {
       const data = await api.login(loginEmail, loginPassword);
       if (data.must_reset_password) {
-        throw new Error("Debes restablecer tu contraseÃ±a en el panel de GateStack primero.");
+        throw new Error("Debes restablecer tu contraseña en el panel de GateStack primero.");
       }
       if (!data.access_token) {
-        throw new Error("GateStack no devolviÃ³ un token de acceso.");
+        throw new Error("GateStack no devolvió un token de acceso.");
       }
 
       localStorage.setItem("gatewiki_token", data.access_token);
@@ -363,7 +363,7 @@ export default function App() {
         key: newSpaceKey.toUpperCase().trim(),
         description: newSpaceDesc,
         is_restricted: newSpaceIsRestricted,
-        allowed_emails: newSpaceIsRestricted ? newSpaceAllowedEmails : ""
+        allowed_emails: newSpaceAllowedEmails
       });
 
       setSpaceModalOpen(false);
@@ -391,7 +391,7 @@ export default function App() {
         key: editSpaceKey.toUpperCase().trim(),
         description: editSpaceDesc,
         is_restricted: editSpaceIsRestricted,
-        allowed_emails: editSpaceIsRestricted ? editSpaceAllowedEmails : ""
+        allowed_emails: editSpaceAllowedEmails
       });
 
       setEditSpaceId(null);
@@ -403,7 +403,7 @@ export default function App() {
   };
 
   const handleDeleteSpace = async (id: string) => {
-    if (!confirm("Â¿Deseas eliminar este espacio y TODAS sus pÃ¡ginas permanentemente?")) return;
+    if (!confirm("¿Deseas eliminar este espacio y TODAS sus páginas permanentemente?")) return;
     try {
       await api.deleteSpace(token, id);
       await refreshData();
@@ -436,7 +436,7 @@ export default function App() {
   };
 
   const handleDeletePage = async (id: string) => {
-    if (!confirm("Â¿Deseas eliminar esta pÃ¡gina de forma permanente?")) return;
+    if (!confirm("¿Deseas eliminar esta página de forma permanente?")) return;
 
     const returnSpaceKey = activeSpaceFilter || (activePage?.id === id ? activePage.space_key : null);
 
@@ -686,7 +686,7 @@ export default function App() {
                   />
                 );
               }
-              return <div>Cargando configuraciÃ³n de espacio...</div>;
+              return <div>Cargando configuración de espacio...</div>;
             })()
           )}
         </div>
@@ -716,7 +716,7 @@ export default function App() {
                 />
               </div>
               <div className="form-group">
-                <label>Identificador Ãºnico (Key)</label>
+                <label>Identificador único (Key)</label>
                 <input
                   type="text"
                   placeholder="Ej: DEVOPS"
@@ -724,15 +724,15 @@ export default function App() {
                   onChange={(e) => setNewSpaceKey(e.target.value)}
                   required
                   pattern="^[A-Z0-9]+$"
-                  title="Solo letras mayÃºsculas y nÃºmeros"
+                  title="Solo letras mayúsculas y números"
                 />
-                <span className="input-helper">Ej: DEVOPS (solo mayÃºsculas y nÃºmeros)</span>
+                <span className="input-helper">Ej: DEVOPS (solo mayúsculas y números)</span>
               </div>
               <div className="form-group">
-                <label>DescripciÃ³n</label>
+                <label>Descripción</label>
                 <textarea
                   rows={3}
-                  placeholder="Describe el propÃ³sito de este espacio..."
+                  placeholder="Describe el propósito de este espacio..."
                   value={newSpaceDesc}
                   onChange={(e) => setNewSpaceDesc(e.target.value)}
                   required
@@ -751,16 +751,16 @@ export default function App() {
                   </label>
                 </div>
                 <p className="text-small text-muted" style={{ fontSize: "12px", marginTop: "4px", color: "var(--color-text-muted)" }}>
-                  Si se activa, solo tÃº, los administradores y los usuarios autorizados de la lista podrÃ¡n ver este espacio de trabajo y sus pÃ¡ginas.
+                  Si se activa, solo tu, los administradores y los miembros podran ver este workspace. Si esta publico, todos pueden verlo, pero solo miembros pueden colaborar.
                 </p>
-                {newSpaceIsRestricted && (
+                {true && (
                   <div className="form-group" style={{ marginTop: "12px" }}>
-                    <label>Miembros Autorizados</label>
+                    <label>Miembros del workspace</label>
                     <div className="allowed-emails-tags" style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px", marginTop: "8px" }}>
                       {(() => {
                         const emails = newSpaceAllowedEmails.split(",").map(e => e.trim()).filter(Boolean);
                         if (emails.length === 0) {
-                          return <span style={{ fontSize: "12px", fontStyle: "italic", color: "var(--color-text-muted)" }}>Agrega usuarios autorizados a la lista.</span>;
+                          return <span style={{ fontSize: "12px", fontStyle: "italic", color: "var(--color-text-muted)" }}>Agrega miembros a la lista.</span>;
                         }
                         return emails.map(email => {
                           const userObj = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
@@ -873,3 +873,4 @@ export default function App() {
     </div>
   );
 }
+

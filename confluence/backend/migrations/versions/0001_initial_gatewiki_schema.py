@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 
 revision: str = "0001_initial"
 down_revision: Union[str, None] = None
@@ -40,8 +41,9 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("space_key", sa.String(length=20), nullable=False),
         sa.Column("title", sa.String(length=180), nullable=False),
-        sa.Column("content", sa.Text(), nullable=True),
-        sa.Column("subtopics", sa.Text(), nullable=True),
+        sa.Column("content", mysql.LONGTEXT(), nullable=True),
+        sa.Column("subtopics", mysql.LONGTEXT(), nullable=True),
+        sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_by_email", sa.String(length=255), nullable=False),
         sa.Column("created_by_name", sa.String(length=160), nullable=False),
         sa.Column("created_by_id", sa.String(length=36), nullable=False),
