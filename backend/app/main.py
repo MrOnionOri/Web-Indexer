@@ -4,12 +4,19 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import admin, apps, auth, feedback, portal, projects
 from app.core.config import get_settings
+from app.core.crypto import ENCRYPTION_PREFIX, encrypt_text
+from app.core.security import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app.db.session import Base, SessionLocal, engine, check_db_connection
+from app.models import FeedbackInternalNote, FeedbackItem
 from app.services.bootstrap import bootstrap
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name)
+docs_kwargs = {}
+if settings.environment.lower() not in {"local", "development", "dev", "test"}:
+    docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+app = FastAPI(title=settings.app_name, **docs_kwargs)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,6 +25,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    safe_methods = {"GET", "HEAD", "OPTIONS", "TRACE"}
+    public_auth_paths = {"/auth/login", "/auth/register", "/auth/password-reset/confirm"}
+    uses_cookie_session = ACCESS_COOKIE_NAME in request.cookies and not request.headers.get("authorization")
+    if request.method.upper() not in safe_methods and uses_cookie_session and request.url.path not in public_auth_paths:
+        csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+        csrf_header = request.headers.get(CSRF_HEADER_NAME)
+        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            return JSONResponse(status_code=403, content={"detail": "Invalid CSRF token"})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -88,6 +108,23 @@ def run_auto_migrations(engine) -> None:
         print(f"Auto-migration error: {e}")
 
 
+def encrypt_existing_sensitive_data(db) -> None:
+    changed = False
+    for item in db.query(FeedbackItem).all():
+        if item.message and not item.message.startswith(ENCRYPTION_PREFIX):
+            item.message = encrypt_text(item.message)
+            changed = True
+        if item.public_response and not item.public_response.startswith(ENCRYPTION_PREFIX):
+            item.public_response = encrypt_text(item.public_response)
+            changed = True
+    for note in db.query(FeedbackInternalNote).all():
+        if note.note and not note.note.startswith(ENCRYPTION_PREFIX):
+            note.note = encrypt_text(note.note)
+            changed = True
+    if changed:
+        db.commit()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     if check_db_connection():
@@ -96,6 +133,7 @@ def on_startup() -> None:
         db = SessionLocal()
         try:
             bootstrap(db)
+            encrypt_existing_sensitive_data(db)
         finally:
             db.close()
     else:

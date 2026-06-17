@@ -12,27 +12,37 @@ from urllib.parse import quote_plus
 from typing import List, Optional
 
 import requests
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Security, UploadFile, status
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, Column, DateTime, String, Text, UniqueConstraint, create_engine, or_, text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, UniqueConstraint, create_engine, or_, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "root")
+DB_USER = os.getenv("DB_USER", "gatestorage_app")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower()
 GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000").rstrip("/")
 GATESTACK_FALLBACK_URLS = [url.strip().rstrip("/") for url in os.getenv("GATESTACK_FALLBACK_URLS", "").split(",") if url.strip()]
-GATESTACK_SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
+GATESTACK_SECRET_KEY = os.getenv("SECRET_KEY")
+DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY")
 STORAGE_ROOT = Path(os.getenv("STORAGE_ROOT", "./data/storage")).resolve()
 CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
     "CORS_ALLOWED_ORIGIN_REGEX",
     r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
 )
+
+if not GATESTACK_SECRET_KEY or len(GATESTACK_SECRET_KEY) < 32:
+    raise RuntimeError("SECRET_KEY must be set to a strong value")
+if not DATA_ENCRYPTION_KEY or len(DATA_ENCRYPTION_KEY) < 32:
+    raise RuntimeError("DATA_ENCRYPTION_KEY must be set to a strong value")
+
+ENCRYPTION_PREFIX = "enc:v1:"
 
 user_escaped = quote_plus(DB_USER)
 password_escaped = quote_plus(DB_PASSWORD)
@@ -41,7 +51,7 @@ DATABASE_URL = f"mysql+pymysql://{user_escaped}:{password_escaped}@{DB_HOST}:{DB
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 class StorageWorkspaceModel(Base):
@@ -59,6 +69,7 @@ class StorageWorkspaceModel(Base):
     quota_bytes = Column(BigInteger, nullable=False, default=0)
     used_bytes = Column(BigInteger, nullable=False, default=0)
     status = Column(String(40), nullable=False, default="active", index=True)
+    status_message = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -110,7 +121,31 @@ class StorageFileModel(Base):
     size_bytes = Column(BigInteger, nullable=False)
     uploaded_by_user_id = Column(String(36), nullable=False, index=True)
     uploaded_by_name = Column(String(160), nullable=False)
+    is_public = Column(Boolean, nullable=False, default=False)
+    public_token = Column(String(80), unique=True, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackItemModel(Base):
+    __tablename__ = "feedback_items"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_app = Column(String(80), nullable=False, default="gatestorage", index=True)
+    title = Column(String(200), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String(40), nullable=False, default="open", index=True)
+    page_id = Column(String(36), nullable=True, index=True)
+    page_title = Column(String(200), nullable=True)
+    space_key = Column(String(80), nullable=True, index=True)
+    created_by_user_id = Column(String(36), nullable=True, index=True)
+    created_by_name = Column(String(160), nullable=False)
+    created_by_email = Column(String(255), nullable=False, index=True)
+    public_response = Column(Text, nullable=False, default="")
+    responded_by_user_id = Column(String(36), nullable=True)
+    responded_by_name = Column(String(160), nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 Base.metadata.create_all(bind=engine)
@@ -123,6 +158,29 @@ def init_db_compatibility() -> None:
             if "member_emails" not in request_columns:
                 conn.execute(text("ALTER TABLE storage_requests ADD COLUMN member_emails TEXT NULL"))
             conn.execute(text("UPDATE storage_requests SET member_emails = '' WHERE member_emails IS NULL"))
+            file_columns = {row[0] for row in conn.execute(text("SHOW COLUMNS FROM storage_files")).fetchall()}
+            if "is_public" not in file_columns:
+                conn.execute(text("ALTER TABLE storage_files ADD COLUMN is_public BOOLEAN NOT NULL DEFAULT 0"))
+            if "public_token" not in file_columns:
+                conn.execute(text("ALTER TABLE storage_files ADD COLUMN public_token VARCHAR(80) NULL"))
+                conn.execute(text("CREATE UNIQUE INDEX ix_storage_files_public_token ON storage_files (public_token)"))
+            workspace_columns = {row[0] for row in conn.execute(text("SHOW COLUMNS FROM storage_workspaces")).fetchall()}
+            if "status_message" not in workspace_columns:
+                conn.execute(text("ALTER TABLE storage_workspaces ADD COLUMN status_message TEXT NULL"))
+            conn.execute(text("UPDATE storage_workspaces SET status_message = '' WHERE status_message IS NULL"))
+            feedback_columns = {row[0] for row in conn.execute(text("SHOW COLUMNS FROM feedback_items")).fetchall()}
+            if "source_app" not in feedback_columns:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN source_app VARCHAR(80) NOT NULL DEFAULT 'gatewiki'"))
+            if "public_response" not in feedback_columns:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN public_response TEXT NULL"))
+            else:
+                conn.execute(text("UPDATE feedback_items SET public_response = '' WHERE public_response IS NULL"))
+            if "responded_by_user_id" not in feedback_columns:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN responded_by_user_id VARCHAR(36) NULL"))
+            if "responded_by_name" not in feedback_columns:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN responded_by_name VARCHAR(160) NULL"))
+            if "responded_at" not in feedback_columns:
+                conn.execute(text("ALTER TABLE feedback_items ADD COLUMN responded_at DATETIME NULL"))
             conn.commit()
     except Exception as exc:
         print("Note: storage compatibility migration skipped:", exc)
@@ -145,6 +203,12 @@ class StorageWorkspaceMembersUpdate(BaseModel):
     member_emails: list[str] = Field(default_factory=list)
 
 
+class StorageWorkspaceAdminUpdate(BaseModel):
+    quota_bytes: int = Field(ge=0)
+    status: str = Field(max_length=40)
+    status_message: str = Field(default="", max_length=2000)
+
+
 class StorageFolderCreate(BaseModel):
     folder: str = Field(default="", max_length=600)
 
@@ -152,6 +216,10 @@ class StorageFolderCreate(BaseModel):
 class StorageFileMove(BaseModel):
     folder: str = Field(default="", max_length=600)
     filename: str | None = Field(default=None, max_length=255)
+
+
+class StorageFilePublicUpdate(BaseModel):
+    is_public: bool
 
 
 class StorageFolderMove(BaseModel):
@@ -168,6 +236,41 @@ class StorageRequestReview(BaseModel):
     status: str
     quota_bytes: int = Field(ge=0)
     admin_notes: str = Field(default="", max_length=2000)
+
+
+class FeedbackCreate(BaseModel):
+    category: str = Field(default="support", max_length=80)
+    title: str = Field(min_length=3, max_length=160)
+    message: str = Field(min_length=5, max_length=4000)
+    workspace_id: str | None = None
+    workspace_name: str | None = Field(default=None, max_length=180)
+
+
+class FeedbackResponseUpdate(BaseModel):
+    public_response: str = Field(min_length=1, max_length=4000)
+    status: str = Field(default="resolved", max_length=40)
+
+
+class FeedbackStatusUpdate(BaseModel):
+    status: str = Field(max_length=40)
+
+
+class FeedbackRead(BaseModel):
+    id: str
+    source_app: str
+    category: str
+    title: str
+    message: str
+    status: str
+    workspace_id: str | None
+    workspace_name: str | None
+    created_by_name: str
+    created_by_email: str
+    public_response: str | None
+    responded_by_name: str | None
+    responded_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class UserListItem(BaseModel):
@@ -187,6 +290,7 @@ class StorageWorkspaceRead(BaseModel):
     quota_bytes: int
     used_bytes: int
     status: str
+    status_message: str = ""
     member_emails: list[str] = []
     created_at: datetime
     updated_at: datetime
@@ -228,6 +332,8 @@ class StorageFileRead(BaseModel):
     size_bytes: int
     uploaded_by_user_id: str
     uploaded_by_name: str
+    is_public: bool = False
+    public_url: str | None = None
     created_at: datetime
 
     class Config:
@@ -246,6 +352,8 @@ class StorageEntryRead(BaseModel):
     size_bytes: int = 0
     uploaded_by_user_id: str | None = None
     uploaded_by_name: str | None = None
+    is_public: bool = False
+    public_url: str | None = None
     created_at: datetime | None = None
 
 
@@ -276,6 +384,33 @@ def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
 def b64url_decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(value + padding)
+
+
+def encryption_key() -> bytes:
+    return hashlib.sha256(DATA_ENCRYPTION_KEY.encode("utf-8")).digest()
+
+
+def encrypt_text(value: str | None) -> str:
+    if value is None:
+        return ""
+    if value.startswith(ENCRYPTION_PREFIX):
+        return value
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(encryption_key()).encrypt(nonce, value.encode("utf-8"), None)
+    return ENCRYPTION_PREFIX + base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
+
+
+def decrypt_text(value: str | None) -> str:
+    if not value:
+        return ""
+    if not value.startswith(ENCRYPTION_PREFIX):
+        return value
+    try:
+        payload = base64.urlsafe_b64decode(value[len(ENCRYPTION_PREFIX):].encode("ascii"))
+        nonce, ciphertext = payload[:12], payload[12:]
+        return AESGCM(encryption_key()).decrypt(nonce, ciphertext, None).decode("utf-8")
+    except Exception:
+        return ""
 
 
 def decode_gatestack_token(token: str) -> dict | None:
@@ -353,12 +488,53 @@ def get_local_user_from_token(token: str, db: Session) -> dict | None:
     }
 
 
+def gatestack_session_headers(request: Request, credentials: HTTPAuthorizationCredentials | None = None) -> dict:
+    headers = {}
+    if credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    elif request.cookies.get("gatestack_access"):
+        headers["Cookie"] = f"gatestack_access={request.cookies['gatestack_access']}"
+        csrf = request.cookies.get("gatestack_csrf")
+        if csrf:
+            headers["Cookie"] += f"; gatestack_csrf={csrf}"
+            headers["X-CSRF-Token"] = csrf
+    return headers
+
+
+def copy_session_cookies(source: requests.Response, target: Response, request: Request) -> None:
+    secure = request.url.scheme == "https" and ENVIRONMENT in {"local", "development", "dev", "test"}
+    if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+        secure = True
+    max_age = 60 * 60 * 8
+    for cookie_name in ("gatestack_access", "gatestack_csrf"):
+        if cookie_name in source.cookies:
+            target.set_cookie(
+                cookie_name,
+                source.cookies[cookie_name],
+                max_age=max_age,
+                httponly=cookie_name == "gatestack_access",
+                secure=secure,
+                samesite="lax",
+                path="/",
+            )
+
+
+def clear_session_cookies(target: Response, request: Request) -> None:
+    secure = request.url.scheme == "https" and ENVIRONMENT in {"local", "development", "dev", "test"}
+    if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+        secure = True
+    for cookie_name in ("gatestack_access", "gatestack_csrf", "gatestack_token"):
+        target.delete_cookie(cookie_name, path="/", secure=secure, samesite="lax")
+
+
 def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Security(security),
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
     db: Session = Depends(get_db),
 ) -> dict:
-    headers = {"Authorization": f"Bearer {credentials.credentials}"}
+    headers = gatestack_session_headers(request, credentials)
+    if not headers:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     for base_url in get_gatestack_urls(request):
         try:
             response = requests.get(f"{base_url}/auth/me", headers=headers, timeout=2.5)
@@ -367,9 +543,10 @@ def get_current_user(
         except Exception:
             continue
 
-    local_user = get_local_user_from_token(credentials.credentials, db)
-    if local_user:
-        return local_user
+    if credentials:
+        local_user = get_local_user_from_token(credentials.credentials, db)
+        if local_user:
+            return local_user
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="GateStack IAM unavailable or invalid token")
 
@@ -488,9 +665,46 @@ def serialize_workspace(workspace: StorageWorkspaceModel, db: Session) -> dict:
         "quota_bytes": workspace.quota_bytes,
         "used_bytes": workspace.used_bytes,
         "status": workspace.status,
+        "status_message": workspace.status_message or "",
         "member_emails": workspace_member_emails(db, workspace),
         "created_at": workspace.created_at,
         "updated_at": workspace.updated_at,
+    }
+
+
+FEEDBACK_CATEGORIES = {
+    "support": "Soporte de storage",
+    "bug": "Reportar problema",
+    "quota": "Solicitar o cambiar cuota",
+    "admin_contact": "Comunicarse con un admin",
+}
+
+
+def normalize_feedback_category(value: str | None) -> str:
+    category = (value or "support").strip().lower()
+    return category if category in FEEDBACK_CATEGORIES else "support"
+
+
+def serialize_feedback_item(item: FeedbackItemModel) -> dict:
+    raw_category = normalize_feedback_category(item.space_key)
+    prefix = f"{FEEDBACK_CATEGORIES[raw_category]}: "
+    display_title = item.title[len(prefix):] if item.title.startswith(prefix) else item.title
+    return {
+        "id": item.id,
+        "source_app": item.source_app,
+        "category": raw_category,
+        "title": display_title,
+        "message": decrypt_text(item.message),
+        "status": item.status,
+        "workspace_id": item.page_id,
+        "workspace_name": item.page_title,
+        "created_by_name": item.created_by_name,
+        "created_by_email": item.created_by_email,
+        "public_response": decrypt_text(item.public_response) if item.public_response else None,
+        "responded_by_name": item.responded_by_name,
+        "responded_at": item.responded_at,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
     }
 
 
@@ -526,6 +740,12 @@ def get_allowed_workspace(workspace_id: str, user: dict, db: Session) -> Storage
     return workspace
 
 
+def ensure_workspace_writable(workspace: StorageWorkspaceModel) -> None:
+    if workspace.status != "active":
+        detail = workspace.status_message or "Storage for this workspace is not active."
+        raise HTTPException(status_code=423, detail=detail)
+
+
 def safe_filename(filename: str) -> str:
     name = Path(filename).name.strip().replace("\\", "_").replace("/", "_")
     return name or "archivo"
@@ -547,12 +767,24 @@ def safe_folder_path(folder: str | None) -> str:
 def ensure_workspace_path(workspace: StorageWorkspaceModel, relative_path: Path | str = "") -> Path:
     root = workspace_dir(workspace.id).resolve()
     path = (root / relative_path).resolve()
-    if not str(path).startswith(str(root)):
+    try:
+        path.relative_to(root)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid storage path")
     return path
 
 
-def storage_file_to_entry(file: StorageFileModel) -> dict:
+def public_file_url(request: Request | None, file: StorageFileModel) -> str | None:
+    if not file.is_public or not file.public_token:
+        return None
+    if request:
+        base_url = str(request.base_url).rstrip("/")
+    else:
+        base_url = ""
+    return f"{base_url}/public/files/{file.public_token}/download"
+
+
+def storage_file_to_entry(file: StorageFileModel, request: Request | None = None) -> dict:
     return {
         "type": "file",
         "name": file.original_filename,
@@ -565,6 +797,8 @@ def storage_file_to_entry(file: StorageFileModel) -> dict:
         "size_bytes": file.size_bytes,
         "uploaded_by_user_id": file.uploaded_by_user_id,
         "uploaded_by_name": file.uploaded_by_name,
+        "is_public": bool(file.is_public),
+        "public_url": public_file_url(request, file),
         "created_at": file.created_at,
     }
 
@@ -573,17 +807,22 @@ def workspace_dir(workspace_id: str) -> Path:
     return STORAGE_ROOT / workspace_id
 
 
-def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, **kwargs):
+def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, response_out: Response | None = None, **kwargs):
     last_error = "GateStack IAM unavailable"
     for base_url in get_gatestack_urls(request):
         try:
-            response = requests.request(method, f"{base_url}{path}", timeout=4.0, **kwargs)
+            headers = dict(kwargs.pop("headers", {}) or {})
+            if request:
+                headers.update(gatestack_session_headers(request))
+            response = requests.request(method, f"{base_url}{path}", timeout=4.0, headers=headers, **kwargs)
             try:
                 payload = response.json()
             except ValueError:
                 payload = {"detail": response.text or "Invalid GateStack IAM response"}
             if response.status_code >= 400:
                 raise HTTPException(status_code=response.status_code, detail=payload.get("detail", payload))
+            if response_out is not None and request is not None:
+                copy_session_cookies(response, response_out, request)
             return payload
         except HTTPException:
             raise
@@ -593,7 +832,11 @@ def forward_gatestack_request(method: str, path: str, request: Optional[Request]
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
 
 
-app = FastAPI(title="GateStorage Service")
+docs_kwargs = {}
+if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+    docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+app = FastAPI(title="GateStorage Service", **docs_kwargs)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
@@ -609,8 +852,16 @@ def auth_me(user: dict = Depends(get_current_user)):
 
 
 @app.post("/auth/login")
-def login(payload: LoginRequest, request: Request):
-    return forward_gatestack_request("POST", "/auth/login", request=request, json=payload.model_dump())
+def login(payload: LoginRequest, request: Request, response: Response):
+    return forward_gatestack_request("POST", "/auth/login", request=request, response_out=response, json=payload.model_dump())
+
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(request: Request, response: Response):
+    try:
+        forward_gatestack_request("POST", "/auth/logout", request=request, response_out=response)
+    finally:
+        clear_session_cookies(response, request)
 
 
 @app.get("/api/users", response_model=list[UserListItem])
@@ -619,6 +870,99 @@ def list_users(user: dict = Depends(get_current_user), db: Session = Depends(get
         text("SELECT email, full_name FROM users WHERE status = 'approved' ORDER BY full_name, email")
     ).mappings()
     return [{"email": row["email"], "full_name": row["full_name"]} for row in rows]
+
+
+@app.post("/api/feedback", response_model=FeedbackRead)
+def create_feedback(payload: FeedbackCreate, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    category = normalize_feedback_category(payload.category)
+    workspace_id = (payload.workspace_id or "").strip() or None
+    workspace_name = (payload.workspace_name or "").strip() or None
+    if workspace_id:
+        workspace = get_allowed_workspace(workspace_id, user, db)
+        workspace_name = workspace.workspace_name
+
+    item = FeedbackItemModel(
+        source_app="gatestorage",
+        title=f"{FEEDBACK_CATEGORIES[category]}: {payload.title.strip()}",
+        message=encrypt_text(payload.message.strip()),
+        status="open",
+        page_id=workspace_id,
+        page_title=workspace_name,
+        space_key=category,
+        created_by_user_id=user.get("id"),
+        created_by_name=user.get("full_name") or user.get("email") or "Usuario",
+        created_by_email=user.get("email") or "",
+        public_response="",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return serialize_feedback_item(item)
+
+
+@app.get("/api/feedback/my", response_model=list[FeedbackRead])
+def list_my_feedback(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    items = (
+        db.query(FeedbackItemModel)
+        .filter(
+            FeedbackItemModel.source_app == "gatestorage",
+            FeedbackItemModel.created_by_user_id == user.get("id"),
+        )
+        .order_by(FeedbackItemModel.created_at.desc())
+        .all()
+    )
+    return [serialize_feedback_item(item) for item in items]
+
+
+@app.get("/api/feedback/admin", response_model=list[FeedbackRead])
+def list_admin_feedback(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    check_permission(user, "gatestorage:admin")
+    items = (
+        db.query(FeedbackItemModel)
+        .filter(FeedbackItemModel.source_app == "gatestorage")
+        .order_by(FeedbackItemModel.created_at.desc())
+        .all()
+    )
+    return [serialize_feedback_item(item) for item in items]
+
+
+@app.patch("/api/feedback/{feedback_id}/response", response_model=FeedbackRead)
+def respond_feedback(feedback_id: str, payload: FeedbackResponseUpdate, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    check_permission(user, "gatestorage:admin")
+    item = (
+        db.query(FeedbackItemModel)
+        .filter(FeedbackItemModel.id == feedback_id, FeedbackItemModel.source_app == "gatestorage")
+        .first()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    item.public_response = encrypt_text(payload.public_response.strip())
+    item.status = payload.status.strip() or "resolved"
+    item.responded_by_user_id = user.get("id")
+    item.responded_by_name = user.get("full_name") or user.get("email") or "Admin"
+    item.responded_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return serialize_feedback_item(item)
+
+
+@app.patch("/api/feedback/{feedback_id}/status", response_model=FeedbackRead)
+def update_feedback_status(feedback_id: str, payload: FeedbackStatusUpdate, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    check_permission(user, "gatestorage:admin")
+    next_status = payload.status.strip().lower()
+    if next_status not in {"open", "in_progress", "resolved", "closed"}:
+        raise HTTPException(status_code=400, detail="Invalid feedback status")
+    item = (
+        db.query(FeedbackItemModel)
+        .filter(FeedbackItemModel.id == feedback_id, FeedbackItemModel.source_app == "gatestorage")
+        .first()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    item.status = next_status
+    db.commit()
+    db.refresh(item)
+    return serialize_feedback_item(item)
 
 
 @app.post("/api/storage-requests", response_model=StorageRequestRead)
@@ -720,19 +1064,21 @@ def list_my_workspaces(user: dict = Depends(get_current_user), db: Session = Dep
 
 
 @app.get("/api/workspaces/{workspace_id}/files", response_model=list[StorageFileRead])
-def list_workspace_files(workspace_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_workspace_files(workspace_id: str, request: Request, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     get_allowed_workspace(workspace_id, user, db)
-    return (
+    files = (
         db.query(StorageFileModel)
         .filter(StorageFileModel.workspace_id == workspace_id)
         .order_by(StorageFileModel.created_at.desc())
         .all()
     )
+    return [{**file.__dict__, "public_url": public_file_url(request, file)} for file in files]
 
 
 @app.get("/api/workspaces/{workspace_id}/entries", response_model=list[StorageEntryRead])
 def list_workspace_entries(
     workspace_id: str,
+    request: Request,
     folder: str = "",
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -769,7 +1115,7 @@ def list_workspace_entries(
         }
         for name in sorted(folder_names, key=str.lower)
     ]
-    file_entries = sorted((storage_file_to_entry(file) for file in visible_files), key=lambda item: item["name"].lower())
+    file_entries = sorted((storage_file_to_entry(file, request) for file in visible_files), key=lambda item: item["name"].lower())
     return [*folder_entries, *file_entries]
 
 
@@ -781,6 +1127,7 @@ def create_workspace_folder(
     db: Session = Depends(get_db),
 ):
     workspace = get_allowed_workspace(workspace_id, user, db)
+    ensure_workspace_writable(workspace)
     folder_path = safe_folder_path(payload.folder)
     if not folder_path:
         raise HTTPException(status_code=400, detail="Folder name is required")
@@ -796,12 +1143,14 @@ def create_workspace_folder(
 @app.post("/api/workspaces/{workspace_id}/files", response_model=StorageFileRead)
 def upload_workspace_file(
     workspace_id: str,
+    request: Request,
     file: UploadFile = File(...),
     folder: str = Form(default=""),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     workspace = get_allowed_workspace(workspace_id, user, db)
+    ensure_workspace_writable(workspace)
     original_filename = safe_filename(file.filename or "archivo")
     folder_parts = safe_folder_parts(folder)
     stored_filename = f"{uuid.uuid4()}_{original_filename}"
@@ -841,13 +1190,14 @@ def upload_workspace_file(
     db.add(storage_file)
     db.commit()
     db.refresh(storage_file)
-    return storage_file
+    return {**storage_file.__dict__, "public_url": public_file_url(request, storage_file)}
 
 
 @app.patch("/api/files/{file_id}/move", response_model=StorageFileRead)
 def move_storage_file(
     file_id: str,
     payload: StorageFileMove,
+    request: Request,
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -855,6 +1205,7 @@ def move_storage_file(
     if not storage_file:
         raise HTTPException(status_code=404, detail="File not found")
     workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
+    ensure_workspace_writable(workspace)
     current_path = ensure_workspace_path(workspace, storage_file.relative_path)
     if not current_path.exists():
         raise HTTPException(status_code=404, detail="File content not found")
@@ -873,7 +1224,32 @@ def move_storage_file(
     storage_file.relative_path = str(target_relative).replace("\\", "/")
     db.commit()
     db.refresh(storage_file)
-    return storage_file
+    return {**storage_file.__dict__, "public_url": public_file_url(request, storage_file)}
+
+
+@app.patch("/api/files/{file_id}/public", response_model=StorageFileRead)
+def update_file_public_access(
+    file_id: str,
+    payload: StorageFilePublicUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    storage_file = db.query(StorageFileModel).filter(StorageFileModel.id == file_id).first()
+    if not storage_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
+    ensure_workspace_writable(workspace)
+    if not can_manage_workspace(user, workspace) and storage_file.uploaded_by_user_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="You cannot change public access for this file")
+    storage_file.is_public = payload.is_public
+    if payload.is_public and not storage_file.public_token:
+        storage_file.public_token = uuid.uuid4().hex + uuid.uuid4().hex[:12]
+    if not payload.is_public:
+        storage_file.public_token = None
+    db.commit()
+    db.refresh(storage_file)
+    return {**storage_file.__dict__, "public_url": public_file_url(request, storage_file)}
 
 
 @app.patch("/api/workspaces/{workspace_id}/folders/move", response_model=StorageEntryRead)
@@ -884,6 +1260,7 @@ def move_workspace_folder(
     db: Session = Depends(get_db),
 ):
     workspace = get_allowed_workspace(workspace_id, user, db)
+    ensure_workspace_writable(workspace)
     source_path = safe_folder_path(payload.source)
     target_path = safe_folder_path(payload.target)
     if not source_path or not target_path:
@@ -928,6 +1305,7 @@ def delete_workspace_folder(
     db: Session = Depends(get_db),
 ):
     workspace = get_allowed_workspace(workspace_id, user, db)
+    ensure_workspace_writable(workspace)
     folder_path = safe_folder_path(folder)
     if not folder_path:
         raise HTTPException(status_code=400, detail="Folder name is required")
@@ -963,8 +1341,27 @@ def download_storage_file(file_id: str, user: dict = Depends(get_current_user), 
     if not storage_file:
         raise HTTPException(status_code=404, detail="File not found")
     workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
-    path = (workspace_dir(workspace.id) / storage_file.relative_path).resolve()
-    if not str(path).startswith(str(workspace_dir(workspace.id).resolve())) or not path.exists():
+    ensure_workspace_writable(workspace)
+    path = ensure_workspace_path(workspace, storage_file.relative_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File content not found")
+    return FileResponse(path, media_type=storage_file.content_type or "application/octet-stream", filename=storage_file.original_filename)
+
+
+@app.get("/public/files/{public_token}/download")
+def download_public_file(public_token: str, db: Session = Depends(get_db)):
+    storage_file = (
+        db.query(StorageFileModel)
+        .filter(StorageFileModel.public_token == public_token, StorageFileModel.is_public == True)
+        .first()
+    )
+    if not storage_file:
+        raise HTTPException(status_code=404, detail="Public file not found")
+    workspace = db.query(StorageWorkspaceModel).filter(StorageWorkspaceModel.id == storage_file.workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Storage workspace not found")
+    path = ensure_workspace_path(workspace, storage_file.relative_path)
+    if not path.exists():
         raise HTTPException(status_code=404, detail="File content not found")
     return FileResponse(path, media_type=storage_file.content_type or "application/octet-stream", filename=storage_file.original_filename)
 
@@ -975,8 +1372,8 @@ def delete_storage_file(file_id: str, user: dict = Depends(get_current_user), db
     if not storage_file:
         raise HTTPException(status_code=404, detail="File not found")
     workspace = get_allowed_workspace(storage_file.workspace_id, user, db)
-    path = (workspace_dir(workspace.id) / storage_file.relative_path).resolve()
-    if str(path).startswith(str(workspace_dir(workspace.id).resolve())) and path.exists():
+    path = ensure_workspace_path(workspace, storage_file.relative_path)
+    if path.exists():
         path.unlink()
     workspace.used_bytes = max(0, workspace.used_bytes - storage_file.size_bytes)
     db.delete(storage_file)
@@ -1022,6 +1419,29 @@ def sync_workspace_members(
     member_emails = normalize_member_emails(payload.member_emails)
     apply_workspace_members(db, workspace, member_emails)
     update_gatewiki_allowed_emails(db, workspace, member_emails)
+    db.commit()
+    db.refresh(workspace)
+    return serialize_workspace(workspace, db)
+
+
+@app.patch("/api/workspaces/{workspace_id}/admin", response_model=StorageWorkspaceRead)
+def update_workspace_admin_controls(
+    workspace_id: str,
+    payload: StorageWorkspaceAdminUpdate,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    check_permission(user, "gatestorage:admin")
+    if payload.status not in {"active", "suspended", "archived"}:
+        raise HTTPException(status_code=400, detail="Status must be active, suspended, or archived")
+    workspace = db.query(StorageWorkspaceModel).filter(StorageWorkspaceModel.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Storage workspace not found")
+    if payload.quota_bytes < workspace.used_bytes:
+        raise HTTPException(status_code=400, detail="Quota cannot be lower than currently used storage")
+    workspace.quota_bytes = payload.quota_bytes
+    workspace.status = payload.status
+    workspace.status_message = payload.status_message.strip()
     db.commit()
     db.refresh(workspace)
     return serialize_workspace(workspace, db)

@@ -2,14 +2,52 @@ param(
   [string]$HostIp = "192.168.1.150",
   [string]$DbHost = "localhost",
   [string]$DbPort = "3306",
-  [string]$DbUser = "root",
+  [string]$DbUser = "",
   [string]$DbPassword = "",
   [string]$DbName = "gatestack",
-  [string]$SecretKey = "change-this-secret-key"
+  [string]$SecretKey = "",
+  [string]$DataEncryptionKey = ""
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
+function Import-DotEnv {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) {
+    return
+  }
+  Get-Content $Path | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) {
+      return
+    }
+    $name, $value = $line.Split("=", 2)
+    if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
+Import-DotEnv (Join-Path $Root ".env")
+
+if (-not $DbUser) {
+  $DbUser = if ($env:GATESTACK_DB_USER) { $env:GATESTACK_DB_USER } else { "gatestack_app" }
+}
+if (-not $DbPassword -and $env:GATESTACK_DB_PASSWORD) {
+  $DbPassword = $env:GATESTACK_DB_PASSWORD
+}
+if (-not $SecretKey) {
+  $SecretKey = $env:SECRET_KEY
+}
+if (-not $DataEncryptionKey) {
+  $DataEncryptionKey = $env:DATA_ENCRYPTION_KEY
+}
+if (-not $SecretKey -or $SecretKey.Length -lt 32) {
+  throw "SECRET_KEY must be set in .env or passed as -SecretKey with at least 32 characters."
+}
+if (-not $DataEncryptionKey -or $DataEncryptionKey.Length -lt 32) {
+  throw "DATA_ENCRYPTION_KEY must be set in .env or passed as -DataEncryptionKey with at least 32 characters."
+}
 if (-not $DbPassword) {
   $DbPassword = Read-Host "MySQL password"
 }
@@ -51,6 +89,7 @@ $env:DB_PASSWORD = $DbPassword
 $env:DB_NAME = $DbName
 $env:DB_TABLE_PREFIX = ""
 $env:SECRET_KEY = $SecretKey
+$env:DATA_ENCRYPTION_KEY = $DataEncryptionKey
 $env:ACCESS_TOKEN_EXPIRE_MINUTES = "480"
 $env:GATESTACK_API_URL = "http://${HostIp}:8000"
 $env:GATESTORAGE_API_URL = "http://${HostIp}:8002"

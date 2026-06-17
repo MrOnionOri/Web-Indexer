@@ -15,6 +15,16 @@ export interface UserProfile {
   }[];
 }
 
+export interface UserBadge {
+  id: string;
+  code: string;
+  label: string;
+  description: string;
+  color: string;
+  icon: string;
+  logo_url: string | null;
+}
+
 const API_BASE_URL = import.meta.env.VITE_GATEWIKI_BACKEND_URL ?? `${window.location.protocol}//${window.location.hostname}:8001`;
 
 export interface Space {
@@ -38,6 +48,7 @@ export interface Page {
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;
+  created_by_badges?: UserBadge[];
   is_restricted: boolean;
   allowed_emails: string;
   comments_allowed: boolean;
@@ -65,6 +76,7 @@ export interface Comment {
   author_email: string;
   author_name: string;
   author_id: string;
+  author_badges?: UserBadge[];
   content: string;
   created_at: string;
   reactions: CommentReaction[];
@@ -86,6 +98,8 @@ export interface FeedbackItem {
   page_id?: string | null;
   page_title?: string | null;
   space_key?: string | null;
+  created_by_name: string;
+  created_by_email: string;
   public_response?: string | null;
   responded_by_name?: string | null;
   responded_at?: string | null;
@@ -140,11 +154,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (hasBody && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (options.token) {
-    headers.set("Authorization", `Bearer ${options.token}`);
+  const method = (options.method ?? "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    const csrfToken = readCookie("gatestack_csrf");
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, cache: "no-store" });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, cache: "no-store", credentials: "include" });
   if (!response.ok) {
     const errorPayload = await response.json().catch(() => ({}));
     const detail = errorPayload.detail || "La solicitud no pudo completarse.";
@@ -157,17 +173,38 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return response.json();
 }
 
+function readCookie(name: string) {
+  return document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`))
+    ?.split("=")[1];
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password })
     }),
-  me: (token: string) => request<UserProfile>("/auth/me", { token }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  me: (_token?: string | null) => request<UserProfile>("/auth/me"),
   users: (token: string | null) => request<UserListItem[]>("/api/users", { token }),
   myFeedback: (token: string | null) => request<FeedbackItem[]>("/api/feedback/my", { token }),
+  adminFeedback: (token: string | null) => request<FeedbackItem[]>("/api/feedback/admin", { token }),
   createFeedback: (token: string | null, payload: unknown) =>
     request<FeedbackItem>("/api/feedback", { method: "POST", token, body: JSON.stringify(payload) }),
+  respondFeedback: (token: string | null, feedbackId: string, publicResponse: string) =>
+    request<FeedbackItem>(`/api/feedback/${feedbackId}/response`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ public_response: publicResponse, status: "resolved" })
+    }),
+  updateFeedbackStatus: (token: string | null, feedbackId: string, status: "open" | "in_progress" | "resolved" | "closed") =>
+    request<FeedbackItem>(`/api/feedback/${feedbackId}/status`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ status })
+    }),
   spaces: (token: string | null) => request<Space[]>("/api/spaces", { token }),
   pages: (token: string | null) => request<Page[]>("/api/pages", { token }),
   page: (token: string | null, pageId: string) => request<Page>(`/api/pages/${pageId}`, { token }),

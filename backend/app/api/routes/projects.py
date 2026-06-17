@@ -1,5 +1,6 @@
 import os
 import logging
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, BackgroundTasks
@@ -14,6 +15,8 @@ from app.schemas import ProjectRead, ProjectReviewRequest
 router = APIRouter(prefix="/projects", tags=["projects"])
 UPLOAD_DIR = Path("storage/uploads")
 ALLOWED_ARCHIVES = {".zip"}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 logger = logging.getLogger("gatestack.projects")
 
 
@@ -45,10 +48,32 @@ async def upload_project(
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     safe_name = os.path.basename(file.filename or "project.zip")
-    storage_path = UPLOAD_DIR / f"{actor.id}-{safe_name}"
+    storage_path = UPLOAD_DIR / f"{actor.id}-{uuid.uuid4()}-{safe_name}"
 
-    contents = await file.read()
-    storage_path.write_bytes(contents)
+    size_bytes = 0
+    first_chunk = True
+    try:
+        with storage_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                if first_chunk:
+                    first_chunk = False
+                    if not chunk.startswith(ZIP_SIGNATURES):
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ZIP archive")
+                size_bytes += len(chunk)
+                if size_bytes > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Archive is too large")
+                output.write(chunk)
+        if size_bytes == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Archive is empty")
+    except HTTPException:
+        if storage_path.exists():
+            storage_path.unlink()
+        raise
+    finally:
+        await file.close()
 
     project = ProjectUpload(
         uploaded_by_user_id=actor.id,

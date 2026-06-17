@@ -1,25 +1,61 @@
 import os
 import uuid
+import base64
+import hashlib
 from datetime import datetime
 from typing import List, Optional
 import requests
 from urllib.parse import quote_plus
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Security, status
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, text, ForeignKey
+from pydantic import BaseModel, Field
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, text, ForeignKey, bindparam
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ----------------- CONFIGURACIÃ“N & DB (MySQL) -----------------
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "root")
+DB_USER = os.getenv("DB_USER", "gatewiki_app")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower()
+SECRET_KEY = os.getenv("SECRET_KEY")
+DATA_ENCRYPTION_KEY = os.getenv("DATA_ENCRYPTION_KEY")
+ENCRYPTION_PREFIX = "enc:v1:"
+
+if not SECRET_KEY or len(SECRET_KEY) < 32:
+    raise RuntimeError("SECRET_KEY must be set to a strong value")
+if not DATA_ENCRYPTION_KEY or len(DATA_ENCRYPTION_KEY) < 32:
+    raise RuntimeError("DATA_ENCRYPTION_KEY must be set to a strong value")
+
+
+def encryption_key() -> bytes:
+    return hashlib.sha256(DATA_ENCRYPTION_KEY.encode("utf-8")).digest()
+
+
+def encrypt_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    if value.startswith(ENCRYPTION_PREFIX):
+        return value
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(encryption_key()).encrypt(nonce, value.encode("utf-8"), None)
+    return ENCRYPTION_PREFIX + base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
+
+
+def decrypt_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    if not value.startswith(ENCRYPTION_PREFIX):
+        return value
+    payload = base64.urlsafe_b64decode(value[len(ENCRYPTION_PREFIX) :].encode("ascii"))
+    nonce, ciphertext = payload[:12], payload[12:]
+    return AESGCM(encryption_key()).decrypt(nonce, ciphertext, None).decode("utf-8")
 
 # URL-escape para caracteres especiales en la contraseÃ±a (ej: @, /)
 user_escaped = quote_plus(DB_USER)
@@ -175,8 +211,48 @@ def init_db_for_local_dev() -> None:
         print("Nota: Error durante la migraciÃ³n de columnas:", e)
 
 
+def encrypt_existing_sensitive_data() -> None:
+    db = SessionLocal()
+    changed = False
+    try:
+        for page in db.query(PageModel).all():
+            if page.content and not page.content.startswith(ENCRYPTION_PREFIX):
+                page.content = encrypt_text(page.content)
+                changed = True
+            if page.subtopics and not page.subtopics.startswith(ENCRYPTION_PREFIX):
+                page.subtopics = encrypt_text(page.subtopics)
+                changed = True
+        for comment in db.query(CommentModel).all():
+            if comment.content and not comment.content.startswith(ENCRYPTION_PREFIX):
+                comment.content = encrypt_text(comment.content)
+                changed = True
+        for item in db.query(FeedbackItemModel).all():
+            if item.message and not item.message.startswith(ENCRYPTION_PREFIX):
+                item.message = encrypt_text(item.message)
+                changed = True
+            if item.public_response and not item.public_response.startswith(ENCRYPTION_PREFIX):
+                item.public_response = encrypt_text(item.public_response)
+                changed = True
+        try:
+            rows = db.execute(text("SELECT id, note FROM feedback_internal_notes WHERE note IS NOT NULL AND note != ''")).mappings().all()
+            for row in rows:
+                if not row["note"].startswith(ENCRYPTION_PREFIX):
+                    db.execute(
+                        text("UPDATE feedback_internal_notes SET note = :note WHERE id = :id"),
+                        {"id": row["id"], "note": encrypt_text(row["note"])},
+                    )
+                    changed = True
+        except Exception:
+            pass
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
 if os.getenv("GATEWIKI_SKIP_DB_INIT") != "1":
     init_db_for_local_dev()
+    encrypt_existing_sensitive_data()
 
 
 # ----------------- SCHEMAS PYDANTIC -----------------
@@ -211,6 +287,16 @@ class PageCreate(BaseModel):
     allowed_emails: str = ""
     comments_allowed: bool = True
 
+
+class BadgeRead(BaseModel):
+    id: str
+    code: str
+    label: str
+    description: str = ""
+    color: str = "#2563eb"
+    icon: str = "award"
+    logo_url: Optional[str] = None
+
 class PageRead(BaseModel):
     id: str
     space_key: str
@@ -221,6 +307,7 @@ class PageRead(BaseModel):
     created_by_email: str
     created_by_name: str
     created_by_id: str
+    created_by_badges: List[BadgeRead] = Field(default_factory=list)
     is_restricted: bool
     allowed_emails: str
     comments_allowed: bool
@@ -260,6 +347,7 @@ class CommentRead(BaseModel):
     author_email: str
     author_name: str
     author_id: str
+    author_badges: List[BadgeRead] = Field(default_factory=list)
     content: str
     created_at: datetime
     reactions: List[CommentReactionRead] = []
@@ -275,6 +363,15 @@ class FeedbackCreate(BaseModel):
     space_key: Optional[str] = None
 
 
+class FeedbackResponseUpdate(BaseModel):
+    public_response: str
+    status: str = "resolved"
+
+
+class FeedbackStatusUpdate(BaseModel):
+    status: str
+
+
 class FeedbackRead(BaseModel):
     id: str
     source_app: str
@@ -284,6 +381,8 @@ class FeedbackRead(BaseModel):
     page_id: Optional[str] = None
     page_title: Optional[str] = None
     space_key: Optional[str] = None
+    created_by_name: str
+    created_by_email: str
     public_response: Optional[str] = ""
     responded_by_name: Optional[str] = None
     responded_at: Optional[datetime] = None
@@ -297,8 +396,28 @@ class StorageRequestCreate(BaseModel):
     requested_gb: int
     reason: str = ""
 
+
+def serialize_feedback_item(item: FeedbackItemModel) -> FeedbackRead:
+    return FeedbackRead(
+        id=item.id,
+        source_app=item.source_app,
+        title=item.title,
+        message=decrypt_text(item.message),
+        status=item.status,
+        page_id=item.page_id,
+        page_title=item.page_title,
+        space_key=item.space_key,
+        created_by_name=item.created_by_name,
+        created_by_email=item.created_by_email,
+        public_response=decrypt_text(item.public_response),
+        responded_by_name=item.responded_by_name,
+        responded_at=item.responded_at,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
 # ----------------- SEGURIDAD & INTEGRACIÃ“N SSO -----------------
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 def get_db():
     db = SessionLocal()
@@ -307,9 +426,23 @@ def get_db():
     finally:
         db.close()
 
-def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
-    token = credentials.credentials
-    headers = {"Authorization": f"Bearer {token}"}
+def gatestack_session_headers(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = None) -> dict:
+    headers = {}
+    if credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    elif request.cookies.get("gatestack_access"):
+        headers["Cookie"] = f"gatestack_access={request.cookies['gatestack_access']}"
+        csrf = request.cookies.get("gatestack_csrf")
+        if csrf:
+            headers["Cookie"] += f"; gatestack_csrf={csrf}"
+            headers["X-CSRF-Token"] = csrf
+    return headers
+
+
+def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> dict:
+    headers = gatestack_session_headers(request, credentials)
+    if not headers:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado.")
     
     urls = get_gatestack_urls(request)
     
@@ -346,11 +479,40 @@ def get_gatestack_urls(request: Optional[Request] = None) -> List[str]:
         *fallback_urls,
     ]))
 
-def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, **kwargs):
+def copy_session_cookies(source: requests.Response, target: Response, request: Request) -> None:
+    secure = request.url.scheme == "https" and ENVIRONMENT in {"local", "development", "dev", "test"}
+    if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+        secure = True
+    max_age = 60 * 60 * 8
+    for cookie_name in ("gatestack_access", "gatestack_csrf"):
+        if cookie_name in source.cookies:
+            target.set_cookie(
+                cookie_name,
+                source.cookies[cookie_name],
+                max_age=max_age,
+                httponly=cookie_name == "gatestack_access",
+                secure=secure,
+                samesite="lax",
+                path="/",
+            )
+
+
+def clear_session_cookies(target: Response, request: Request) -> None:
+    secure = request.url.scheme == "https" and ENVIRONMENT in {"local", "development", "dev", "test"}
+    if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+        secure = True
+    for cookie_name in ("gatestack_access", "gatestack_csrf", "gatestack_token"):
+        target.delete_cookie(cookie_name, path="/", secure=secure, samesite="lax")
+
+
+def forward_gatestack_request(method: str, path: str, request: Optional[Request] = None, response_out: Optional[Response] = None, **kwargs):
     last_error = "GateStack IAM no estÃ¡ disponible."
     for base_url in get_gatestack_urls(request):
         try:
-            response = requests.request(method, f"{base_url}{path}", timeout=4.0, **kwargs)
+            headers = dict(kwargs.pop("headers", {}) or {})
+            if request:
+                headers.update(gatestack_session_headers(request))
+            response = requests.request(method, f"{base_url}{path}", timeout=4.0, headers=headers, **kwargs)
             try:
                 payload = response.json()
             except ValueError:
@@ -359,6 +521,8 @@ def forward_gatestack_request(method: str, path: str, request: Optional[Request]
             if response.status_code >= 400:
                 detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
                 raise HTTPException(status_code=response.status_code, detail=detail)
+            if response_out is not None and request is not None:
+                copy_session_cookies(response, response_out, request)
             return payload
         except HTTPException:
             raise
@@ -391,8 +555,12 @@ def forward_gatestorage_request(method: str, path: str, request: Request, **kwar
     auth_header = request.headers.get("authorization")
     if auth_header:
         headers["Authorization"] = auth_header
-    elif request.cookies.get("gatestack_token"):
-        headers["Authorization"] = f"Bearer {request.cookies['gatestack_token']}"
+    elif request.cookies.get("gatestack_access"):
+        headers["Cookie"] = f"gatestack_access={request.cookies['gatestack_access']}"
+        csrf = request.cookies.get("gatestack_csrf")
+        if csrf:
+            headers["Cookie"] += f"; gatestack_csrf={csrf}"
+            headers["X-CSRF-Token"] = csrf
 
     for base_url in get_gatestorage_urls(request):
         try:
@@ -494,8 +662,94 @@ def ensure_page_access(page: PageModel, db: Session, user: dict, action: str = "
 
     return space
 
+
+def get_public_badges_for_users(db: Session, user_ids: List[str]) -> dict[str, List[BadgeRead]]:
+    unique_user_ids = sorted({user_id for user_id in user_ids if user_id})
+    if not unique_user_ids:
+        return {}
+    try:
+        rows = db.execute(
+            text(
+                """
+                SELECT
+                    uba.user_id,
+                    ub.id,
+                    ub.code,
+                    ub.label,
+                    COALESCE(ub.description, '') AS description,
+                    COALESCE(ub.color, '#2563eb') AS color,
+                    COALESCE(ub.icon, 'award') AS icon,
+                    ub.logo_url
+                FROM user_badge_assignments uba
+                JOIN user_badges ub ON ub.id = uba.badge_id
+                WHERE uba.user_id IN :user_ids
+                ORDER BY ub.label ASC
+                """
+            ).bindparams(bindparam("user_ids", expanding=True)),
+            {"user_ids": unique_user_ids},
+        ).mappings().all()
+    except Exception as exc:
+        print("Nota: no se pudieron cargar badges publicos:", exc)
+        return {}
+
+    badges_by_user: dict[str, List[BadgeRead]] = {}
+    for row in rows:
+        badges_by_user.setdefault(row["user_id"], []).append(
+            BadgeRead(
+                id=row["id"],
+                code=row["code"],
+                label=row["label"],
+                description=row["description"],
+                color=row["color"],
+                icon=row["icon"],
+                logo_url=row["logo_url"],
+            )
+        )
+    return badges_by_user
+
+
+def serialize_page(page: PageModel, badges_by_user: Optional[dict[str, List[BadgeRead]]] = None) -> PageRead:
+    badges_by_user = badges_by_user or {}
+    return PageRead(
+        id=page.id,
+        space_key=page.space_key,
+        title=page.title,
+        content=decrypt_text(page.content),
+        subtopics=decrypt_text(page.subtopics),
+        sort_order=page.sort_order,
+        created_by_email=page.created_by_email,
+        created_by_name=page.created_by_name,
+        created_by_id=page.created_by_id,
+        created_by_badges=badges_by_user.get(page.created_by_id, []),
+        is_restricted=bool(page.is_restricted),
+        allowed_emails=page.allowed_emails or "",
+        comments_allowed=bool(page.comments_allowed),
+        created_at=page.created_at,
+        updated_at=page.updated_at,
+    )
+
+
+def serialize_comment(comment: CommentModel, badges_by_user: Optional[dict[str, List[BadgeRead]]] = None) -> CommentRead:
+    badges_by_user = badges_by_user or {}
+    return CommentRead(
+        id=comment.id,
+        page_id=comment.page_id,
+        parent_id=comment.parent_id,
+        author_email=comment.author_email,
+        author_name=comment.author_name,
+        author_id=comment.author_id,
+        author_badges=badges_by_user.get(comment.author_id, []),
+        content=decrypt_text(comment.content),
+        created_at=comment.created_at,
+        reactions=list(getattr(comment, "reactions", []) or []),
+    )
+
 # ----------------- APP FASTAPI -----------------
-app = FastAPI(title="GateWiki Service (MySQL)")
+docs_kwargs = {}
+if ENVIRONMENT not in {"local", "development", "dev", "test"}:
+    docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+app = FastAPI(title="GateWiki Service (MySQL)", **docs_kwargs)
 
 # Habilitar CORS
 app.add_middleware(
@@ -511,8 +765,15 @@ app.add_middleware(
 
 # --- Auth proxy hacia GateStack IAM ---
 @app.post("/auth/login")
-def login(payload: LoginRequest, request: Request):
-    return forward_gatestack_request("POST", "/auth/login", request=request, json=payload.model_dump())
+def login(payload: LoginRequest, request: Request, response: Response):
+    return forward_gatestack_request("POST", "/auth/login", request=request, response_out=response, json=payload.model_dump())
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(request: Request, response: Response):
+    try:
+        forward_gatestack_request("POST", "/auth/logout", request=request, response_out=response)
+    finally:
+        clear_session_cookies(response, request)
 
 @app.get("/auth/me")
 def auth_me(user: dict = Depends(get_current_user)):
@@ -544,29 +805,74 @@ def create_feedback(payload: FeedbackCreate, db: Session = Depends(get_db), user
     item = FeedbackItemModel(
         source_app="gatewiki",
         title=payload.title.strip(),
-        message=payload.message.strip(),
+        message=encrypt_text(payload.message.strip()),
         page_id=payload.page_id,
         page_title=payload.page_title,
         space_key=(payload.space_key or "").upper() or None,
         created_by_user_id=user.get("id"),
         created_by_name=user.get("full_name"),
         created_by_email=user.get("email"),
+        public_response="",
     )
     db.add(item)
     db.commit()
     db.refresh(item)
-    return item
+    return serialize_feedback_item(item)
 
 
 @app.get("/api/feedback/my", response_model=List[FeedbackRead])
 def get_my_feedback(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:view")
-    return (
+    items = (
         db.query(FeedbackItemModel)
         .filter(FeedbackItemModel.created_by_user_id == user.get("id"))
         .order_by(FeedbackItemModel.created_at.desc())
         .all()
     )
+    return [serialize_feedback_item(item) for item in items]
+
+
+@app.get("/api/feedback/admin", response_model=List[FeedbackRead])
+def get_admin_feedback(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:admin")
+    items = (
+        db.query(FeedbackItemModel)
+        .filter(FeedbackItemModel.source_app == "gatewiki")
+        .order_by(FeedbackItemModel.created_at.desc())
+        .all()
+    )
+    return [serialize_feedback_item(item) for item in items]
+
+
+@app.patch("/api/feedback/{feedback_id}/response", response_model=FeedbackRead)
+def respond_feedback(feedback_id: str, payload: FeedbackResponseUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:admin")
+    item = db.query(FeedbackItemModel).filter(FeedbackItemModel.id == feedback_id, FeedbackItemModel.source_app == "gatewiki").first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Feedback no encontrado.")
+    item.public_response = encrypt_text(payload.public_response.strip())
+    item.status = payload.status.strip() or "resolved"
+    item.responded_by_user_id = user.get("id")
+    item.responded_by_name = user.get("full_name") or user.get("email") or "Admin"
+    item.responded_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return serialize_feedback_item(item)
+
+
+@app.patch("/api/feedback/{feedback_id}/status", response_model=FeedbackRead)
+def update_feedback_status(feedback_id: str, payload: FeedbackStatusUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:admin")
+    next_status = payload.status.strip().lower()
+    if next_status not in {"open", "in_progress", "resolved", "closed"}:
+        raise HTTPException(status_code=400, detail="Estado de feedback invalido.")
+    item = db.query(FeedbackItemModel).filter(FeedbackItemModel.id == feedback_id, FeedbackItemModel.source_app == "gatewiki").first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Feedback no encontrado.")
+    item.status = next_status
+    db.commit()
+    db.refresh(item)
+    return serialize_feedback_item(item)
 
 # --- Espacios ---
 @app.get("/api/spaces", response_model=List[SpaceRead])
@@ -766,8 +1072,9 @@ def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), us
             allowed_list = [email.strip().lower() for email in (page.allowed_emails or "").split(",") if email.strip()]
             if is_admin or page.created_by_id == user_id or user_email in allowed_list:
                 visible_pages.append(page)
-                
-    return visible_pages
+
+    badges_by_user = get_public_badges_for_users(db, [page.created_by_id for page in visible_pages])
+    return [serialize_page(page, badges_by_user) for page in visible_pages]
 
 @app.get("/api/pages/{page_id}", response_model=PageRead)
 def get_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -794,7 +1101,8 @@ def get_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(g
         if not (is_admin or page.created_by_id == user_id or user_email in allowed_list):
             raise HTTPException(status_code=403, detail="No tienes acceso para visualizar esta pÃ¡gina privada.")
             
-    return page
+    badges_by_user = get_public_badges_for_users(db, [page.created_by_id])
+    return serialize_page(page, badges_by_user)
 
 @app.post("/api/pages", response_model=PageRead)
 def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -815,8 +1123,8 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
     db_page = PageModel(
         space_key=page.space_key.upper(),
         title=page.title,
-        content=page.content,
-        subtopics=page.subtopics,
+        content=encrypt_text(page.content),
+        subtopics=encrypt_text(page.subtopics),
         sort_order=next_sort_order,
         created_by_email=user.get("email"),
         created_by_name=user.get("full_name"),
@@ -828,7 +1136,8 @@ def create_page(page: PageCreate, db: Session = Depends(get_db), user: dict = De
     db.add(db_page)
     db.commit()
     db.refresh(db_page)
-    return db_page
+    badges_by_user = get_public_badges_for_users(db, [db_page.created_by_id])
+    return serialize_page(db_page, badges_by_user)
 
 @app.put("/api/pages/{page_id}", response_model=PageRead)
 def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -857,8 +1166,8 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
         check_permission(user, "gatewiki:edit_page")
         
     page.title = payload.title
-    page.content = payload.content
-    page.subtopics = payload.subtopics
+    page.content = encrypt_text(payload.content)
+    page.subtopics = encrypt_text(payload.subtopics)
     page.is_restricted = payload.is_restricted
     page.allowed_emails = payload.allowed_emails
     page.space_key = payload.space_key.upper()
@@ -866,7 +1175,8 @@ def update_page(page_id: str, payload: PageCreate, db: Session = Depends(get_db)
     
     db.commit()
     db.refresh(page)
-    return page
+    badges_by_user = get_public_badges_for_users(db, [page.created_by_id])
+    return serialize_page(page, badges_by_user)
 
 @app.put("/api/page-order", response_model=List[PageRead])
 def reorder_pages(payload: PageReorderRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -885,7 +1195,9 @@ def reorder_pages(payload: PageReorderRequest, db: Session = Depends(get_db), us
             page.sort_order = (index + 1) * 10
 
     db.commit()
-    return db.query(PageModel).filter(PageModel.space_key == space_key).order_by(PageModel.sort_order.asc(), PageModel.created_at.desc()).all()
+    ordered_pages = db.query(PageModel).filter(PageModel.space_key == space_key).order_by(PageModel.sort_order.asc(), PageModel.created_at.desc()).all()
+    badges_by_user = get_public_badges_for_users(db, [page.created_by_id for page in ordered_pages])
+    return [serialize_page(page, badges_by_user) for page in ordered_pages]
 
 @app.delete("/api/pages/{page_id}", status_code=204)
 def delete_page(page_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -930,7 +1242,8 @@ def get_comments(page_id: str, db: Session = Depends(get_db), user: dict = Depen
     comments = db.query(CommentModel).filter(CommentModel.page_id == page_id).order_by(CommentModel.created_at.asc()).all()
     for c in comments:
         c.reactions = db.query(CommentReactionModel).filter(CommentReactionModel.comment_id == c.id).all()
-    return comments
+    badges_by_user = get_public_badges_for_users(db, [comment.author_id for comment in comments])
+    return [serialize_comment(comment, badges_by_user) for comment in comments]
 
 
 @app.post("/api/pages/{page_id}/comments", response_model=CommentRead)
@@ -963,13 +1276,14 @@ def create_comment(page_id: str, payload: CommentCreate, db: Session = Depends(g
         author_email=user.get("email"),
         author_name=user.get("full_name"),
         author_id=user.get("id"),
-        content=payload.content
+        content=encrypt_text(payload.content)
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
     db_comment.reactions = []
-    return db_comment
+    badges_by_user = get_public_badges_for_users(db, [db_comment.author_id])
+    return serialize_comment(db_comment, badges_by_user)
 
 
 class ReactionPayload(BaseModel):
@@ -1096,8 +1410,8 @@ def seed_data(db: Session = Depends(get_db), user: dict = Depends(get_current_us
             db.add(PageModel(
                 space_key=pd["space_key"],
                 title=pd["title"],
-                content=pd["content"],
-                subtopics=pd.get("subtopics", ""),
+                content=encrypt_text(pd["content"]),
+                subtopics=encrypt_text(pd.get("subtopics", "")),
                 created_by_email=user.get("email"),
                 created_by_name=user.get("full_name"),
                 created_by_id=user.get("id"),

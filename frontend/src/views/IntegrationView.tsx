@@ -46,14 +46,8 @@ export function useGateStackAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('gatestack_token');
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
     fetch('http://localhost:8000/auth/me', {
-      headers: { 'Authorization': \`Bearer \${token}\` }
+      credentials: 'include'
     })
     .then(res => res.json())
     .then(data => {
@@ -61,7 +55,6 @@ export function useGateStackAuth() {
       setLoading(false);
     })
     .catch(() => {
-      localStorage.removeItem('gatestack_token');
       setLoading(false);
     });
   }, []);
@@ -117,4 +110,3 @@ export function useGateStackAuth() {
     </div>
   );
 }
-

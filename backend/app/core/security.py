@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import secrets
 from typing import Any
 
 from jose import JWTError, jwt
@@ -9,6 +10,9 @@ from app.core.config import get_settings
 settings = get_settings()
 password_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
+ACCESS_COOKIE_NAME = "gatestack_access"
+CSRF_COOKIE_NAME = "gatestack_csrf"
+CSRF_HEADER_NAME = "x-csrf-token"
 
 
 def hash_password(password: str) -> str:
@@ -26,6 +30,10 @@ def create_access_token(subject: str, permissions: list[str]) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
     payload: dict[str, Any] = {"sub": subject, "permissions": permissions, "exp": expires_at, "type": "access"}
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 def decode_token(token: str) -> dict[str, Any] | None:

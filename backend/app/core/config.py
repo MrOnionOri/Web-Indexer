@@ -1,14 +1,15 @@
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "GateStack"
     environment: str = "local"
-    secret_key: str = "change-this-secret-key"
+    secret_key: str | None = None
+    data_encryption_key: str | None = None
     access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 14
     database_url: str | None = None
@@ -30,6 +31,20 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "Settings":
+        if not self.secret_key or len(self.secret_key) < 32:
+            raise ValueError("SECRET_KEY must be set to a strong value")
+        if not self.data_encryption_key or len(self.data_encryption_key) < 32:
+            raise ValueError("DATA_ENCRYPTION_KEY must be set to a strong value")
+        return self
+
+    @property
+    def data_encryption_secret(self) -> str:
+        if not self.data_encryption_key:
+            raise RuntimeError("DATA_ENCRYPTION_KEY is not configured")
+        return self.data_encryption_key
 
     @property
     def sqlalchemy_database_url(self) -> str:

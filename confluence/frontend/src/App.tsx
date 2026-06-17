@@ -17,17 +17,7 @@ import { api, Comment, Page, Space, UserListItem, UserProfile } from "./api";
 
 export default function App() {
   // Auth states
-  const [token, setToken] = useState<string | null>(() => {
-    const match = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/);
-    if (match) {
-      const val = decodeURIComponent(match[1]);
-      localStorage.setItem("gatewiki_token", val);
-      return val;
-    }
-    const local = localStorage.getItem("gatewiki_token");
-    if (local) return local;
-    return null;
-  });
+  const [token, setToken] = useState<string | null>("cookie-session");
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -140,27 +130,22 @@ export default function App() {
 
   const validateTokenAndInit = async (jwtToken: string) => {
     try {
+      localStorage.removeItem("gatewiki_token");
+      document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
       const profile = await api.me(jwtToken);
       const hasViewPermission = profile.permissions.includes("gatewiki:view") || profile.is_platform_admin;
 
       if (!hasViewPermission) {
-        localStorage.removeItem("gatewiki_token");
         setToken(null);
         setLoginError("Acceso denegado: No tienes el permiso 'gatewiki:view'.");
       } else {
         setCurrentUser(profile);
       }
     } catch (err) {
-      localStorage.removeItem("gatewiki_token");
-      const sharedToken = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/)?.[1];
-      if (sharedToken && decodeURIComponent(sharedToken) !== jwtToken) {
-        const decodedToken = decodeURIComponent(sharedToken);
-        localStorage.setItem("gatewiki_token", decodedToken);
-        setToken(decodedToken);
-        return;
-      }
       setToken(null);
-      setLoginError("Sesión inválida o conexión perdida con GateStack.");
+      if (jwtToken !== "cookie-session") {
+        setLoginError("Sesion invalida o conexion perdida con GateStack.");
+      }
     } finally {
       setInitialLoading(false);
     }
@@ -337,13 +322,7 @@ export default function App() {
       if (data.must_reset_password) {
         throw new Error("Debes restablecer tu contraseña en el panel de GateStack primero.");
       }
-      if (!data.access_token) {
-        throw new Error("GateStack no devolvió un token de acceso.");
-      }
-
-      localStorage.setItem("gatewiki_token", data.access_token);
-      document.cookie = `gatestack_token=${data.access_token}; path=/; max-age=1209600; SameSite=Lax`;
-      setToken(data.access_token);
+      setToken("cookie-session");
     } catch (err: any) {
       setLoginError(err.message || "Error al conectar al servidor.");
     } finally {
@@ -351,9 +330,8 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("gatewiki_token");
-    document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
+  const handleLogout = async () => {
+    await api.logout().catch(() => {});
     setToken(null);
     setCurrentUser(null);
     setSpaces([]);
@@ -659,6 +637,7 @@ export default function App() {
 
           {currentView === "admin" && hasAdmin && (
             <AdminPanel
+              token={token}
               spaces={spaces}
               pages={pages}
               onSeedData={handleSeedData}

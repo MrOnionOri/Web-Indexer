@@ -1,6 +1,7 @@
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -8,6 +9,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.config import get_settings
+from app.core.crypto import reset_token_digest
 from app.db.session import get_db
 from app.models import (
     AuditLog,
@@ -174,11 +177,29 @@ def delete_user(
 
 
 def ensure_password_reset_token(user: User) -> str:
-    if not user.password_reset_token:
-        user.password_reset_token = secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(32)
+    user.password_reset_token = reset_token_digest(token)
     user.password_reset_expires_at = datetime.utcnow() + timedelta(hours=24)
     user.must_reset_password = True
-    return user.password_reset_token
+    return token
+
+
+def trusted_frontend_origin(request: Request) -> str:
+    settings = get_settings()
+    configured_origins = [str(origin).rstrip("/") for origin in settings.backend_cors_origins]
+    configured_origin_set = set(configured_origins)
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if origin in configured_origin_set:
+        return origin
+
+    referer = request.headers.get("referer") or ""
+    if referer:
+        parsed = urlparse(referer)
+        referer_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        if referer_origin in configured_origin_set:
+            return referer_origin
+
+    return configured_origins[0] if configured_origins else "http://localhost:5173"
 
 
 @router.post("/users/{user_id}/password-reset-link", response_model=PasswordResetLinkResponse)
@@ -195,7 +216,7 @@ def create_password_reset_link(
     token = ensure_password_reset_token(user)
     db.add(AuditLog(actor_user_id=actor.id, action="users.password_reset_link_created", target_type="user", target_id=user.id))
     db.commit()
-    frontend_origin = request.headers.get("origin") or "http://localhost:5173"
+    frontend_origin = trusted_frontend_origin(request)
     return PasswordResetLinkResponse(reset_token=token, reset_url=f"{frontend_origin}/?reset_token={token}")
 
 

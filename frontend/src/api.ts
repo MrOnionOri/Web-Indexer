@@ -142,12 +142,16 @@ export interface ProjectUpload {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem("gatestack_token");
   const headers = new Headers(options.headers);
-  headers.set("Content-Type", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const isFormData = options.body instanceof FormData;
+  const method = (options.method ?? "GET").toUpperCase();
+  if (!isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    const csrfToken = readCookie("gatestack_csrf");
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, credentials: "include" });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Request failed" }));
     const err = new Error(error.detail ?? "Request failed");
@@ -160,6 +164,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json();
 }
 
+function readCookie(name: string) {
+  return document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`))
+    ?.split("=")[1];
+}
+
 export const api = {
   async login(email: string, password: string) {
     return request<{ access_token: string | null; must_reset_password: boolean; reset_token: string | null }>("/auth/login", {
@@ -167,6 +178,10 @@ export const api = {
       body: JSON.stringify({ email, password }),
     });
   },
+  logout: () =>
+    request<void>("/auth/logout", {
+      method: "POST",
+    }),
   async register(email: string, fullName: string, password: string) {
     return request<Me>("/auth/register", {
       method: "POST",
@@ -312,9 +327,9 @@ export const api = {
     });
   },
   async uploadProject(file: File) {
-    const token = localStorage.getItem("gatestack_token");
     const headers = new Headers();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const csrfToken = readCookie("gatestack_csrf");
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
     const body = new FormData();
     body.append("file", file);
 
@@ -322,6 +337,7 @@ export const api = {
       method: "POST",
       headers,
       body,
+      credentials: "include",
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Upload failed" }));

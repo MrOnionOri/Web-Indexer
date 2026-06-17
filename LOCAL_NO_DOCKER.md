@@ -45,4 +45,5 @@ logs/local/
 - GateStorage guarda archivos en `gatestorage/data/storage`.
 - GateWiki usa GateStack IAM con `GATESTACK_API_URL`.
 - GateWiki usa GateStorage con `GATESTORAGE_API_URL`.
+- Todos los backends deben compartir `DATA_ENCRYPTION_KEY` para leer columnas cifradas.
 - Si cambias tu IPv4, vuelve a arrancar con `-HostIp "TU_IPV4"`.

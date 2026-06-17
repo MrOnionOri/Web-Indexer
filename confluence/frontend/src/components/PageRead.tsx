@@ -36,6 +36,7 @@ interface Comment {
   author_email: string;
   author_name: string;
   author_id: string;
+  author_badges?: UserBadge[];
   content: string;
   created_at: string;
   reactions: CommentReaction[];
@@ -50,6 +51,7 @@ interface Page {
   created_by_email: string;
   created_by_name: string;
   created_by_id: string;
+  created_by_badges?: UserBadge[];
   is_restricted: boolean;
   allowed_emails: string;
   comments_allowed: boolean;
@@ -115,11 +117,11 @@ export default function PageRead({
     });
   };
 
-  const renderUserBadges = (userId: string) => {
-    if (userId !== currentUser.id || !currentUser.badges?.length) return null;
+  const renderUserBadges = (badges?: UserBadge[]) => {
+    if (!badges?.length) return null;
     return (
       <span className="inline-user-badges">
-        {currentUser.badges.slice(0, 3).map((badge) => (
+        {badges.slice(0, 3).map((badge) => (
           <span
             className="inline-user-badge"
             style={{ borderColor: badge.color, color: badge.color }}
@@ -229,7 +231,7 @@ export default function PageRead({
             <div className="author-details">
               <span className="author-name">
                 {activePage.created_by_name}
-                {renderUserBadges(activePage.created_by_id)}
+                {renderUserBadges(activePage.created_by_badges)}
               </span>
               <span className="page-date">Creada el {formatDate(activePage.created_at)}</span>
             </div>
@@ -295,7 +297,7 @@ export default function PageRead({
                         <div className="comment-meta">
                           <span className="comment-author-name">
                             {comment.author_name}
-                            {renderUserBadges(comment.author_id)}
+                            {renderUserBadges(comment.author_badges)}
                           </span>
                           <span className="comment-timestamp">{formatDate(comment.created_at)}</span>
                           {canDelete && (
@@ -355,7 +357,7 @@ export default function PageRead({
                                 <div className="comment-meta">
                                   <span className="comment-author-name">
                                     {reply.author_name}
-                                    {renderUserBadges(reply.author_id)}
+                                    {renderUserBadges(reply.author_badges)}
                                   </span>
                                   <span className="comment-timestamp">{formatDate(reply.created_at)}</span>
                                   {canDeleteReply && (

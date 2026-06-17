@@ -9,9 +9,11 @@ El frontend ya no llama directo a GateStack IAM. Llama al backend de GateWiki en
 ```env
 DB_HOST=localhost
 DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=
+DB_USER=gatewiki_app
+DB_PASSWORD=replace-with-generated-password
 DB_NAME=gatestack
+SECRET_KEY=replace-with-at-least-32-random-characters
+DATA_ENCRYPTION_KEY=replace-with-at-least-32-random-characters
 GATESTACK_API_URL=http://192.168.1.150:8000
 GATESTACK_FALLBACK_URLS=http://host.docker.internal:8000,http://gatestack-backend:8000
 CORS_ALLOWED_ORIGINS=
@@ -26,10 +28,6 @@ VITE_GATEWIKI_BACKEND_URL=http://192.168.1.150:8001
 ```
 
 En desarrollo, Vite usa este valor para proxyear `/api` y `/auth` hacia el backend GateWiki. En el build Docker no hace falta porque FastAPI sirve el frontend compilado desde el mismo origen.
-
-## Backend legacy
-
-El archivo `main.py` de la raiz usa SQLite y queda marcado como legacy. La app activa es `backend/main.py`.
 
 ## Migraciones
 

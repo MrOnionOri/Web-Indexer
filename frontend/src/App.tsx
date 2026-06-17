@@ -106,30 +106,16 @@ export function App() {
     const tokenFromUrl = new URLSearchParams(window.location.search).get("reset_token");
     if (tokenFromUrl) {
       setResetToken(tokenFromUrl);
+      window.history.replaceState({}, document.title, window.location.pathname || "/");
     }
-    let token = localStorage.getItem("gatestack_token");
-    if (!token) {
-      const match = document.cookie.match(/(?:^|; )gatestack_token=([^;]*)/);
-      if (match) {
-        token = match[1];
-        localStorage.setItem("gatestack_token", token);
-      }
-    }
-    if (!token) {
-      finishAuthCheck();
-      return;
-    }
-    if (token) {
-      api.me()
-        .then(setMe)
-        .catch((err) => {
-          checkMaintenance(err);
-          localStorage.removeItem("gatestack_token");
-          document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
-          setAuthChecking(false);
-        })
-        .then(finishAuthCheck);
-    }
+    localStorage.removeItem("gatestack_token");
+    document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
+    api.me()
+      .then(setMe)
+      .catch((err) => {
+        checkMaintenance(err);
+      })
+      .then(finishAuthCheck);
   }, []);
 
   useEffect(() => {
@@ -227,17 +213,15 @@ export function App() {
         setError("Registro enviado. Un admin debe aprobar tu acceso.");
         setMode("login");
       } else {
-        const token = await api.login(email, password);
-        if (token.must_reset_password && token.reset_token) {
-          setResetToken(token.reset_token);
-          setError("Debes cambiar tu contraseña antes de continuar.");
+        const session = await api.login(email, password);
+        if (session.must_reset_password) {
+          if (session.reset_token) {
+            setResetToken(session.reset_token);
+          }
+          setError("Debes cambiar tu contraseña desde el enlace de restablecimiento generado por un admin.");
           return;
         }
-        if (token.access_token) {
-          localStorage.setItem("gatestack_token", token.access_token);
-          document.cookie = `gatestack_token=${token.access_token}; path=/; max-age=1209600; SameSite=Lax`;
-          setMe(await api.me());
-        }
+        setMe(await api.me());
       }
     } catch (authError: any) {
       checkMaintenance(authError);
@@ -247,9 +231,8 @@ export function App() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem("gatestack_token");
-    document.cookie = "gatestack_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax";
+  async function logout() {
+    await api.logout().catch(() => {});
     setMe(null);
     navigate("dashboard");
   }

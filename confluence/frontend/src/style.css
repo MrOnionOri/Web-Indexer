@@ -762,6 +762,12 @@ h1, h2, h3, h4, h5, h6 {
     color: #4caf50;
 }
 
+.permission-badge.closed {
+    background: rgba(100, 116, 139, 0.12);
+    border-color: rgba(100, 116, 139, 0.28);
+    color: var(--text-muted);
+}
+
 /* View Container */
 .view-container {
     flex: 1;
@@ -2189,6 +2195,151 @@ h1, h2, h3, h4, h5, h6 {
     padding: 12px;
     border-radius: 8px;
     background: rgba(34, 197, 94, 0.08);
+}
+
+.modal-subheader {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.modal-subheader h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.modal-subheader span {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.gatewiki-feedback-chat {
+    display: grid;
+    gap: 12px;
+    padding: 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.gatewiki-chat-thread,
+.wiki-admin-chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 340px;
+    overflow-y: auto;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.022);
+}
+
+.wiki-chat-bubble {
+    max-width: min(82%, 620px);
+    display: grid;
+    gap: 5px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    line-height: 1.45;
+}
+
+.wiki-chat-bubble.mine,
+.wiki-chat-bubble.admin {
+    align-self: flex-end;
+    border-bottom-right-radius: 6px;
+    background: var(--color-primary);
+    color: #ffffff;
+}
+
+.wiki-chat-bubble.user,
+.gatewiki-chat-thread .wiki-chat-bubble.admin {
+    align-self: flex-start;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 18px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-main);
+}
+
+.wiki-chat-bubble p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: inherit;
+}
+
+.wiki-chat-bubble span {
+    opacity: 0.75;
+    font-size: 11px;
+}
+
+.wiki-chat-composer,
+.wiki-admin-reply {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    align-items: end;
+}
+
+.wiki-chat-composer input,
+.wiki-admin-reply textarea {
+    width: 100%;
+    min-height: 46px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    background: var(--bg-input);
+    color: var(--text-main);
+}
+
+.wiki-admin-reply textarea {
+    min-height: 76px;
+    resize: vertical;
+}
+
+.admin-chat-card {
+    margin-top: 24px;
+}
+
+.wiki-admin-chat-list {
+    display: grid;
+    gap: 16px;
+}
+
+.wiki-admin-chat-thread {
+    display: grid;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.wiki-admin-chat-head {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.wiki-admin-chat-head div {
+    display: grid;
+    gap: 3px;
+}
+
+.wiki-admin-chat-head span {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+body.light-theme .gatewiki-chat-thread,
+body.light-theme .wiki-admin-chat-messages,
+body.light-theme .wiki-admin-chat-thread {
+    background: rgba(0, 0, 0, 0.018);
+}
+
+body.light-theme .wiki-chat-bubble.user,
+body.light-theme .gatewiki-chat-thread .wiki-chat-bubble.admin {
+    background: rgba(0, 0, 0, 0.045);
 }
 
 .storage-card {

@@ -16,6 +16,9 @@ backend/.env
 backend/storage/
 gatestorage/data/
 frontend/gatestack-preview.png
+*.db
+*.sqlite
+*.sqlite3
 
 
 # OS/editor

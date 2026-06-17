@@ -66,6 +66,7 @@ Configura estas variables en `backend/.env` antes de iniciar:
 ```env
 BOOTSTRAP_ADMIN_EMAIL=admin@gatestack.dev
 BOOTSTRAP_ADMIN_PASSWORD=ChangeMe123!
+DATA_ENCRYPTION_KEY=usa-una-clave-larga-y-distinta-en-produccion
 ```
 
 Al arrancar, el backend crea permisos base, templates iniciales y el usuario admin si no existe.
