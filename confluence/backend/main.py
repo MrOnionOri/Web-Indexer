@@ -81,6 +81,14 @@ GATESTORAGE_FALLBACK_URLS = [
     for url in os.getenv("GATESTORAGE_FALLBACK_URLS", "").split(",")
     if url.strip()
 ]
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "").rstrip("/")
+OLLAMA_FALLBACK_URLS = [
+    url.strip().rstrip("/")
+    for url in os.getenv("OLLAMA_FALLBACK_URLS", "").split(",")
+    if url.strip()
+]
+OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "gatewiki-assistant")
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
@@ -782,8 +790,27 @@ def ai_tokenize(value: str) -> set[str]:
     }
 
 
+def is_ai_greeting(value: str) -> bool:
+    normalized = re.sub(r"[^\wáéíóúÁÉÍÓÚñÑ]+", " ", (value or "").lower()).strip()
+    return normalized in {
+        "hola",
+        "buenas",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "hello",
+        "hi",
+    }
+
+
 def clean_markdown_text(value: str) -> str:
-    text_value = re.sub(r"```.*?```", " ", value or "", flags=re.S)
+    def code_block_to_text(match: re.Match) -> str:
+        language = (match.group(1) or "").strip()
+        code = (match.group(2) or "").strip()
+        label = f"Bloque de codigo {language}" if language else "Bloque de codigo"
+        return f" {label}: {code} "
+
+    text_value = re.sub(r"```([a-zA-Z0-9_+-]*)\n(.*?)```", code_block_to_text, value or "", flags=re.S)
     text_value = re.sub(r"`([^`]+)`", r"\1", text_value)
     text_value = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text_value)
     text_value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text_value)
@@ -841,6 +868,90 @@ def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
         lines.append(f"- {sentence} ({source.page_title}, {source.space_key})")
     lines.append("Revisa las fuentes para confirmar detalles antes de tomar una decision importante.")
     return "\n".join(lines)
+
+
+def get_ollama_urls(request: Optional[Request] = None) -> List[str]:
+    inferred_urls: List[str] = []
+    if request:
+        host = request.url.hostname
+        if host and host not in {"localhost", "127.0.0.1"}:
+            inferred_urls.append(f"{request.url.scheme}://{host}:11434")
+
+    return list(dict.fromkeys([
+        OLLAMA_BASE_URL,
+        *inferred_urls,
+        *OLLAMA_FALLBACK_URLS,
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://host.docker.internal:11434",
+    ]))
+
+
+def build_ollama_context(matches: List[AiChatSource]) -> str:
+    context_blocks = []
+    for index, source in enumerate(matches, start=1):
+        context_blocks.append(
+            "\n".join([
+                f"[Fuente {index}]",
+                f"Pagina: {source.page_title}",
+                f"Workspace: {source.space_key}",
+                f"Fragmento: {source.excerpt}",
+            ])
+        )
+    return "\n\n".join(context_blocks)
+
+
+def ask_ollama(question: str, matches: List[AiChatSource], request: Optional[Request] = None) -> Optional[str]:
+    if not matches:
+        return None
+
+    system_prompt = (
+        "Eres el asistente de GateWiki. Tu tono es amable, breve y util. "
+        "Puedes saludar y orientar al usuario sobre que puede preguntarte. "
+        "Para preguntas sobre conocimiento, responde usando solo el contexto proporcionado. "
+        "Puedes hacer inferencias directas y obvias desde el contexto, por ejemplo identificar el lenguaje de un bloque de codigo si el contexto lo muestra. "
+        "Si el contexto no contiene la respuesta, di que no encontraste ese dato en los wikis disponibles y sugiere preguntar con otro termino o revisar otra pagina. "
+        "No inventes datos externos ni agregues informacion que no este respaldada por las fuentes. "
+        "Responde en maximo 5 bullets o 1 parrafo corto. Cita las paginas usadas al final cuando uses fuentes."
+    )
+    user_prompt = (
+        "Pregunta del usuario:\n"
+        f"{question}\n\n"
+        "Contexto disponible de GateWiki:\n"
+        f"{build_ollama_context(matches)}"
+    )
+    payload = {
+        "model": OLLAMA_CHAT_MODEL,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "options": {
+            "temperature": 0.1,
+            "top_p": 0.75,
+            "num_ctx": 4096,
+            "num_predict": 350,
+        },
+    }
+
+    for base_url in get_ollama_urls(request):
+        if not base_url:
+            continue
+        try:
+            response = requests.post(
+                f"{base_url}/api/chat",
+                json=payload,
+                timeout=OLLAMA_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 200:
+                continue
+            answer = response.json().get("message", {}).get("content", "").strip()
+            if answer:
+                return answer
+        except Exception:
+            continue
+    return None
 
 # ----------------- APP FASTAPI -----------------
 docs_kwargs = {}
@@ -1129,10 +1240,17 @@ def request_space_storage(
 
 # --- PÃ¡ginas ---
 @app.post("/api/ai-chat", response_model=AiChatResponse)
-def ai_chat(payload: AiChatRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:view")
 
     question = payload.message.strip()
+    if is_ai_greeting(question):
+        return AiChatResponse(
+            answer="Hola, soy el asistente de GateWiki. En que te puedo ayudar? Puedes preguntarme sobre temas, procesos, codigo o configuraciones documentadas en los wikis.",
+            sources=[],
+            searched_pages=0,
+        )
+
     question_tokens = ai_tokenize(question)
     if not question_tokens:
         raise HTTPException(status_code=400, detail="Escribe una pregunta mas especifica.")
@@ -1170,18 +1288,24 @@ def ai_chat(payload: AiChatRequest, db: Session = Depends(get_db), user: dict = 
 
     ranked_sources.sort(key=lambda source: source.score, reverse=True)
     selected_sources: List[AiChatSource] = []
-    seen_sources: set[str] = set()
+    seen_pages: set[str] = set()
+    top_score = ranked_sources[0].score if ranked_sources else 0
+    min_relevance = max(2.8, top_score * 0.55) if top_score else 0
     for source in ranked_sources:
-        source_key = f"{source.page_id}:{source.excerpt[:80]}"
-        if source_key in seen_sources:
+        if source.page_id in seen_pages:
             continue
+        if source.score < min_relevance:
+            if selected_sources or top_score < 2.0:
+                continue
         selected_sources.append(source)
-        seen_sources.add(source_key)
+        seen_pages.add(source.page_id)
         if len(selected_sources) >= payload.max_sources:
             break
 
+    ollama_answer = ask_ollama(question, selected_sources, request)
+
     return AiChatResponse(
-        answer=build_ai_answer(question, selected_sources),
+        answer=ollama_answer or build_ai_answer(question, selected_sources),
         sources=selected_sources,
         searched_pages=len(pages),
     )
