@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, PlusCircle, ShieldCheck, Sun, Moon, MessageSquarePlus } from "lucide-react";
+import { Search, PlusCircle, ShieldCheck, Sun, Moon, MessageSquarePlus, Bot } from "lucide-react";
 
 interface UserProfile {
   id: string;
@@ -18,6 +18,7 @@ interface TopbarProps {
   onCreatePageClick: () => void;
   onAdminPanelClick: () => void;
   onFeedbackClick: () => void;
+  onAiChatClick: () => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
 }
@@ -31,6 +32,7 @@ export default function Topbar({
   onCreatePageClick,
   onAdminPanelClick,
   onFeedbackClick,
+  onAiChatClick,
   theme,
   onToggleTheme
 }: TopbarProps) {
@@ -59,6 +61,10 @@ export default function Topbar({
         <button className="btn-secondary" onClick={onFeedbackClick}>
           <MessageSquarePlus size={16} />
           <span>Feedback</span>
+        </button>
+        <button className="btn-secondary" onClick={onAiChatClick}>
+          <Bot size={16} />
+          <span>AI Wiki</span>
         </button>
         <button className="btn-primary" disabled={!hasCreate} onClick={onCreatePageClick}>
           <PlusCircle size={16} />

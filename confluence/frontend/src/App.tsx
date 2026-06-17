@@ -10,6 +10,7 @@ import PageRead from "./components/PageRead";
 import PageEdit from "./components/PageEdit";
 import AdminPanel from "./components/AdminPanel";
 import FeedbackModal from "./components/FeedbackModal";
+import AiChatModal from "./components/AiChatModal";
 import SpaceSettings from "./components/SpaceSettings";
 import TopicOrder from "./components/TopicOrder";
 import MarkdownContent from "./components/MarkdownContent";
@@ -79,6 +80,7 @@ export default function App() {
   const [editPageCommentsAllowed, setEditPageCommentsAllowed] = useState(true);
   const [comments, setComments] = useState<Comment[]>([]);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
 
   // Admin states
   const [seedSuccessMsg, setSeedSuccessMsg] = useState("");
@@ -555,6 +557,7 @@ export default function App() {
           onCreatePageClick={() => navigate("/edit")}
           onAdminPanelClick={() => navigate("/admin")}
           onFeedbackClick={() => setFeedbackOpen(true)}
+          onAiChatClick={() => setAiChatOpen(true)}
           theme={theme}
           onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
         />
@@ -679,6 +682,14 @@ export default function App() {
       </main>
 
       <FeedbackModal token={token} activePage={activePage} open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <AiChatModal
+        token={token}
+        activePage={activePage}
+        activeSpaceFilter={activeSpaceFilter}
+        open={aiChatOpen}
+        onClose={() => setAiChatOpen(false)}
+        onReadPage={(id) => navigate(`/page/${id}`)}
+      />
 
       {/* Space Modal Overlay */}
       {spaceModalOpen && (

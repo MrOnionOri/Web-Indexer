@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import hashlib
+import re
 from datetime import datetime
 from typing import List, Optional
 import requests
@@ -397,6 +398,27 @@ class StorageRequestCreate(BaseModel):
     reason: str = ""
 
 
+class AiChatRequest(BaseModel):
+    message: str = Field(..., min_length=2, max_length=1200)
+    space_key: Optional[str] = None
+    page_id: Optional[str] = None
+    max_sources: int = Field(default=5, ge=1, le=8)
+
+
+class AiChatSource(BaseModel):
+    page_id: str
+    page_title: str
+    space_key: str
+    excerpt: str
+    score: float
+
+
+class AiChatResponse(BaseModel):
+    answer: str
+    sources: List[AiChatSource]
+    searched_pages: int
+
+
 def serialize_feedback_item(item: FeedbackItemModel) -> FeedbackRead:
     return FeedbackRead(
         id=item.id,
@@ -744,6 +766,82 @@ def serialize_comment(comment: CommentModel, badges_by_user: Optional[dict[str, 
         reactions=list(getattr(comment, "reactions", []) or []),
     )
 
+
+AI_STOPWORDS = {
+    "aqui", "como", "con", "cual", "cuales", "cuando", "dame", "del", "desde", "donde",
+    "esta", "este", "esto", "estos", "para", "pero", "por", "que", "sobre", "son", "una",
+    "unas", "uno", "unos", "the", "and", "for", "how", "what", "when", "where", "with",
+}
+
+
+def ai_tokenize(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-zA-Z0-9_áéíóúÁÉÍÓÚñÑ]{3,}", (value or "").lower())
+        if token not in AI_STOPWORDS
+    }
+
+
+def clean_markdown_text(value: str) -> str:
+    text_value = re.sub(r"```.*?```", " ", value or "", flags=re.S)
+    text_value = re.sub(r"`([^`]+)`", r"\1", text_value)
+    text_value = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text_value)
+    text_value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text_value)
+    text_value = re.sub(r"[#>*_\-]+", " ", text_value)
+    return re.sub(r"\s+", " ", text_value).strip()
+
+
+def split_ai_chunks(value: str, max_chars: int = 900) -> List[str]:
+    blocks = [clean_markdown_text(block) for block in re.split(r"\n{2,}", value or "")]
+    chunks: List[str] = []
+    current = ""
+    for block in [block for block in blocks if block]:
+        if len(current) + len(block) + 1 <= max_chars:
+            current = f"{current} {block}".strip()
+        else:
+            if current:
+                chunks.append(current)
+            current = block[:max_chars]
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def visible_pages_for_ai(db: Session, user: dict, space_key: Optional[str] = None, page_id: Optional[str] = None) -> List[PageModel]:
+    query = db.query(PageModel)
+    if page_id:
+        query = query.filter(PageModel.id == page_id)
+    if space_key:
+        query = query.filter(PageModel.space_key == space_key.upper())
+
+    visible_pages: List[PageModel] = []
+    for page in query.order_by(PageModel.updated_at.desc()).all():
+        try:
+            ensure_page_access(page, db, user)
+            visible_pages.append(page)
+        except HTTPException:
+            continue
+    return visible_pages
+
+
+def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
+    if not matches:
+        return (
+            "No encontre informacion suficiente en los wikis a los que tienes acceso. "
+            "Prueba con otra pregunta, un termino mas especifico o revisa si el contenido esta en un workspace restringido."
+        )
+
+    lines = ["Segun los wikis disponibles:"]
+    for source in matches[:3]:
+        excerpt = source.excerpt
+        sentences = re.split(r"(?<=[.!?])\s+", excerpt)
+        sentence = next((part.strip() for part in sentences if len(part.strip()) > 45), excerpt[:220].strip())
+        if len(sentence) > 260:
+            sentence = sentence[:257].rstrip() + "..."
+        lines.append(f"- {sentence} ({source.page_title}, {source.space_key})")
+    lines.append("Revisa las fuentes para confirmar detalles antes de tomar una decision importante.")
+    return "\n".join(lines)
+
 # ----------------- APP FASTAPI -----------------
 docs_kwargs = {}
 if ENVIRONMENT not in {"local", "development", "dev", "test"}:
@@ -1030,6 +1128,65 @@ def request_space_storage(
 
 
 # --- PÃ¡ginas ---
+@app.post("/api/ai-chat", response_model=AiChatResponse)
+def ai_chat(payload: AiChatRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    check_permission(user, "gatewiki:view")
+
+    question = payload.message.strip()
+    question_tokens = ai_tokenize(question)
+    if not question_tokens:
+        raise HTTPException(status_code=400, detail="Escribe una pregunta mas especifica.")
+
+    pages = visible_pages_for_ai(db, user, payload.space_key, payload.page_id)
+    ranked_sources: List[AiChatSource] = []
+
+    for page in pages:
+        content = decrypt_text(page.content)
+        subtopics = decrypt_text(page.subtopics)
+        page_context = f"{page.title} {page.space_key} {subtopics}"
+        page_tokens = ai_tokenize(page_context)
+        for chunk in split_ai_chunks(content):
+            chunk_tokens = ai_tokenize(chunk)
+            if not chunk_tokens:
+                continue
+            overlap = question_tokens & (chunk_tokens | page_tokens)
+            if not overlap:
+                continue
+            title_hits = len(question_tokens & page_tokens)
+            density = len(overlap) / max(len(question_tokens), 1)
+            score = round((len(overlap) * 2.0) + (title_hits * 1.2) + density, 3)
+            excerpt = chunk[:520].strip()
+            if len(chunk) > 520:
+                excerpt += "..."
+            ranked_sources.append(
+                AiChatSource(
+                    page_id=page.id,
+                    page_title=page.title,
+                    space_key=page.space_key,
+                    excerpt=excerpt,
+                    score=score,
+                )
+            )
+
+    ranked_sources.sort(key=lambda source: source.score, reverse=True)
+    selected_sources: List[AiChatSource] = []
+    seen_sources: set[str] = set()
+    for source in ranked_sources:
+        source_key = f"{source.page_id}:{source.excerpt[:80]}"
+        if source_key in seen_sources:
+            continue
+        selected_sources.append(source)
+        seen_sources.add(source_key)
+        if len(selected_sources) >= payload.max_sources:
+            break
+
+    return AiChatResponse(
+        answer=build_ai_answer(question, selected_sources),
+        sources=selected_sources,
+        searched_pages=len(pages),
+    )
+
+
 @app.get("/api/pages", response_model=List[PageRead])
 def get_pages(space_key: Optional[str] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:view")

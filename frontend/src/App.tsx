@@ -1,12 +1,15 @@
 import {
   AppWindow,
+  Award,
   Database,
   KeyRound,
   Layers3,
   LogOut,
+  Moon,
   ShieldCheck,
   ShieldX,
   SlidersHorizontal,
+  Sun,
   UploadCloud,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -71,6 +74,9 @@ export function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [isMaintenance, setIsMaintenance] = useState(false);
   const [refreshCount, setRefreshCount] = useState(0);
+  const [theme, setTheme] = useState<"dark" | "light">(
+    () => (localStorage.getItem("gatestack_theme") as "dark" | "light") || (localStorage.getItem("gatewiki_theme") as "dark" | "light") || "dark"
+  );
 
   const can = useMemo(() => new Set(me?.permissions ?? []), [me]);
   const adminViews: View[] = ["users", "admin-apps", "admin-home", "feedback", "projects", "security", "integration"];
@@ -83,6 +89,11 @@ export function App() {
     can.has("projects:review") ||
     can.has("templates:view") ||
     can.has("users:permissions");
+
+  useEffect(() => {
+    document.body.classList.toggle("light-theme", theme === "light");
+    localStorage.setItem("gatestack_theme", theme);
+  }, [theme]);
 
   function navigate(nextView: View, nextUserViewMode: UserViewMode = "permissions") {
     window.history.pushState({}, "", routePath(nextView, nextUserViewMode));
@@ -283,6 +294,14 @@ export function App() {
           </div>
         </section>
         <form className="auth-panel" onSubmit={handleAuth}>
+          <button
+            type="button"
+            className="theme-toggle auth-theme-toggle"
+            onClick={() => setTheme((value) => value === "light" ? "dark" : "light")}
+            title={theme === "light" ? "Cambiar a modo noche" : "Cambiar a modo dia"}
+          >
+            {theme === "light" ? <Moon /> : <Sun />}
+          </button>
           <div className="tabs">
             <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
               Entrar
@@ -375,10 +394,28 @@ export function App() {
           </div>
         )}
         
-        <button className="nav logout" onClick={logout}>
-          <LogOut />
-          Salir
-        </button>
+        <div className="sidebar-footer">
+          <div className="user-profile">
+            <div className="user-avatar">{initials(me.full_name)}</div>
+            <div className="user-info">
+              <span className="user-name">{me.full_name}</span>
+              <span className="user-email">{me.email}</span>
+              {!!me.badges?.length && (
+                <div className="profile-badges">
+                  {me.badges.slice(0, 3).map((badge) => (
+                    <span className="profile-badge" style={{ borderColor: badge.color, color: badge.color }} title={badge.description || badge.label} key={badge.id}>
+                      {badge.logo_url ? <img className="profile-badge-logo" src={badge.logo_url} alt="" /> : <Award />}
+                      {badge.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button type="button" className="btn-logout" onClick={logout} title="Salir">
+              <LogOut />
+            </button>
+          </div>
+        </div>
       </aside>
 
       <section className="content">
@@ -387,9 +424,15 @@ export function App() {
             <span className="eyebrow">{adminToolsActive ? "Admin tools" : "Portal principal"}</span>
             <h2>{viewTitle(view)}</h2>
           </div>
-          <div className="user-pill">
-            <span>{me.full_name}</span>
-            <small>{me.is_platform_admin ? "Platform admin" : "Usuario aprobado"}</small>
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={() => setTheme((value) => value === "light" ? "dark" : "light")}
+              title={theme === "light" ? "Cambiar a modo noche" : "Cambiar a modo dia"}
+            >
+              {theme === "light" ? <Moon /> : <Sun />}
+            </button>
           </div>
         </header>
 
@@ -466,4 +509,13 @@ function viewTitle(view: View) {
     integration: "Integracion API",
   };
   return titles[view];
+}
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "U";
 }

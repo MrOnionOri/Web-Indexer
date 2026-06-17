@@ -143,6 +143,20 @@ export interface StorageRequest {
   updated_at: string;
 }
 
+export interface AiChatSource {
+  page_id: string;
+  page_title: string;
+  space_key: string;
+  excerpt: string;
+  score: number;
+}
+
+export interface AiChatResponse {
+  answer: string;
+  sources: AiChatSource[];
+  searched_pages: number;
+}
+
 type RequestOptions = Omit<RequestInit, "headers"> & {
   token?: string | null;
   headers?: HeadersInit;
@@ -254,5 +268,11 @@ export const api = {
     }),
   deleteComment: (token: string | null, commentId: string) =>
     request<void>(`/api/comments/${commentId}`, { method: "DELETE", token }),
-  seed: (token: string | null) => request<{ message: string }>("/api/seed", { method: "POST", token })
+  seed: (token: string | null) => request<{ message: string }>("/api/seed", { method: "POST", token }),
+  aiChat: (token: string | null, payload: { message: string; space_key?: string | null; page_id?: string | null }) =>
+    request<AiChatResponse>("/api/ai-chat", {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload)
+    })
 };
