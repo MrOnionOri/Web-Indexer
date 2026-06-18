@@ -25,7 +25,11 @@ export interface UserBadge {
   logo_url: string | null;
 }
 
-const API_BASE_URL = import.meta.env.VITE_GATEWIKI_BACKEND_URL ?? `${window.location.protocol}//${window.location.hostname}:8001`;
+const serverProtocol = (import.meta.env.VITE_SERVER_PROTOCOL || window.location.protocol.replace(":", "")).trim();
+const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname).trim();
+const backendPort = (import.meta.env.VITE_GATEWIKI_BACKEND_PORT || "8001").trim();
+const configuredBackendUrl = import.meta.env.VITE_GATEWIKI_BACKEND_URL?.trim();
+const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
 
 export interface Space {
   id: string;

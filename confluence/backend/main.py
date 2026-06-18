@@ -803,15 +803,16 @@ def is_ai_greeting(value: str) -> bool:
     }
 
 
-def clean_markdown_text(value: str) -> str:
-    def code_block_to_text(match: re.Match) -> str:
-        language = (match.group(1) or "").strip()
-        code = (match.group(2) or "").strip()
-        label = f"Bloque de codigo {language}" if language else "Bloque de codigo"
-        return f" {label}: {code} "
+def is_ai_creator_question(value: str) -> bool:
+    normalized = re.sub(r"[^\w]+", " ", (value or "").lower()).strip()
+    asks_who = any(term in normalized.split() for term in ("quien", "quién", "quienes"))
+    creator_verbs = ("hizo", "hicieron", "creo", "creó", "crearon", "desarrollo", "desarrolló", "desarrollaron")
+    project_terms = ("plataforma", "proyecto", "gatewiki", "gatestack")
+    return asks_who and any(term in normalized.split() for term in creator_verbs) and any(term in normalized for term in project_terms)
 
-    text_value = re.sub(r"```([a-zA-Z0-9_+-]*)\n(.*?)```", code_block_to_text, value or "", flags=re.S)
-    text_value = re.sub(r"`([^`]+)`", r"\1", text_value)
+
+def clean_markdown_text(value: str) -> str:
+    text_value = re.sub(r"`([^`]+)`", r"\1", value or "")
     text_value = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text_value)
     text_value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text_value)
     text_value = re.sub(r"[#>*_\-]+", " ", text_value)
@@ -819,10 +820,25 @@ def clean_markdown_text(value: str) -> str:
 
 
 def split_ai_chunks(value: str, max_chars: int = 900) -> List[str]:
-    blocks = [clean_markdown_text(block) for block in re.split(r"\n{2,}", value or "")]
+    parts = re.split(r"(```[a-zA-Z0-9_+-]*\s*\n.*?```)", value or "", flags=re.S)
+    blocks: List[str] = []
+    for part in parts:
+        if not part.strip():
+            continue
+        if part.lstrip().startswith("```"):
+            blocks.append(part.strip())
+            continue
+        blocks.extend(clean_markdown_text(block) for block in re.split(r"\n{2,}", part))
+
     chunks: List[str] = []
     current = ""
     for block in [block for block in blocks if block]:
+        if block.startswith("```"):
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(block[:max_chars] if len(block) <= max_chars else block[:max_chars - 4].rstrip() + "\n```")
+            continue
         if len(current) + len(block) + 1 <= max_chars:
             current = f"{current} {block}".strip()
         else:
@@ -857,6 +873,19 @@ def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
             "No encontre informacion suficiente en los wikis a los que tienes acceso. "
             "Prueba con otra pregunta, un termino mas especifico o revisa si el contenido esta en un workspace restringido."
         )
+
+    asks_for_code = bool(re.search(r"\b(codigo|código|code|ejemplo)\b", question.lower()))
+    if asks_for_code:
+        for source in matches:
+            code_match = re.search(r"```([a-zA-Z0-9_+-]*)\s*\n(.*?)```", source.excerpt, flags=re.S)
+            if code_match:
+                language = code_match.group(1) or "text"
+                code = code_match.group(2).strip()
+                return (
+                    f"Encontré este ejemplo en **{source.page_title}**:\n\n"
+                    f"```{language}\n{code}\n```\n\n"
+                    "Revisa la fuente para confirmar el contexto y los valores que debes adaptar."
+                )
 
     lines = ["Segun los wikis disponibles:"]
     for source in matches[:3]:
@@ -912,6 +941,7 @@ def ask_ollama(question: str, matches: List[AiChatSource], request: Optional[Req
         "Puedes hacer inferencias directas y obvias desde el contexto, por ejemplo identificar el lenguaje de un bloque de codigo si el contexto lo muestra. "
         "Si el contexto no contiene la respuesta, di que no encontraste ese dato en los wikis disponibles y sugiere preguntar con otro termino o revisar otra pagina. "
         "No inventes datos externos ni agregues informacion que no este respaldada por las fuentes. "
+        "Cuando el usuario solicite codigo y el contexto incluya un ejemplo, conserva el codigo y presentalo en un bloque Markdown con el lenguaje indicado, por ejemplo ```python. "
         "Responde en maximo 5 bullets o 1 parrafo corto. Cita las paginas usadas al final cuando uses fuentes."
     )
     user_prompt = (
@@ -1251,9 +1281,20 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
             searched_pages=0,
         )
 
+    if is_ai_creator_question(question):
+        return AiChatResponse(
+            answer=(
+                "La plataforma fue realizada por el **equipo de Redeployment**, liderado por **Martin P.**, "
+                "junto a sus programadores **Cesar C.** y **Jonathan C.**"
+            ),
+            sources=[],
+            searched_pages=0,
+        )
+
     question_tokens = ai_tokenize(question)
     if not question_tokens:
         raise HTTPException(status_code=400, detail="Escribe una pregunta mas especifica.")
+    asks_for_code = bool(re.search(r"\b(codigo|código|code|ejemplo)\b", question.lower()))
 
     pages = visible_pages_for_ai(db, user, payload.space_key, payload.page_id)
     ranked_sources: List[AiChatSource] = []
@@ -1272,9 +1313,11 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
                 continue
             title_hits = len(question_tokens & page_tokens)
             density = len(overlap) / max(len(question_tokens), 1)
-            score = round((len(overlap) * 2.0) + (title_hits * 1.2) + density, 3)
-            excerpt = chunk[:520].strip()
-            if len(chunk) > 520:
+            code_boost = 6.0 if asks_for_code and chunk.lstrip().startswith("```") else 0.0
+            score = round((len(overlap) * 2.0) + (title_hits * 1.2) + density + code_boost, 3)
+            excerpt_limit = 1200 if chunk.lstrip().startswith("```") else 520
+            excerpt = chunk[:excerpt_limit].strip()
+            if len(chunk) > excerpt_limit:
                 excerpt += "..."
             ranked_sources.append(
                 AiChatSource(

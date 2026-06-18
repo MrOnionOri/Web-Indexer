@@ -106,7 +106,11 @@ type FeedbackItem = {
   updated_at: string;
 };
 
-const API_BASE_URL = import.meta.env.VITE_GATESTORAGE_BACKEND_URL ?? "http://192.168.1.150:8002";
+const serverProtocol = (import.meta.env.VITE_SERVER_PROTOCOL || window.location.protocol.replace(":", "")).trim();
+const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname).trim();
+const backendPort = (import.meta.env.VITE_GATESTORAGE_BACKEND_PORT || "8002").trim();
+const configuredBackendUrl = import.meta.env.VITE_GATESTORAGE_BACKEND_URL?.trim();
+const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
 
 type StorageView = "mine" | "admin";
 

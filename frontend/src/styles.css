@@ -3258,3 +3258,209 @@ body.light-theme .action-menu {
 body.light-theme .modal-backdrop {
   background: rgba(15, 23, 42, 0.42);
 }
+
+/* Centered GateStack authentication */
+.gatestack-login-shell,
+body.light-theme .gatestack-login-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: 32px 20px;
+  background: #eef1fb;
+  color: #172033;
+}
+
+.gatestack-login-card,
+body.light-theme .gatestack-login-card {
+  position: relative;
+  width: min(100%, 440px);
+  margin: 0;
+  padding: 46px 40px 34px;
+  align-self: auto;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #172033;
+  box-shadow: 0 24px 70px rgba(47, 64, 112, 0.13);
+}
+
+.gatestack-login-header {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.gatestack-login-mark,
+body.light-theme .gatestack-login-mark {
+  width: 54px;
+  height: 54px;
+  border: 1px solid #cfdbff;
+  border-radius: 16px;
+  background: #f5f7ff;
+  color: #356dff;
+  box-shadow: none;
+}
+
+.gatestack-login-header h1 {
+  margin: 22px 0 8px;
+  color: #151827;
+  font-size: 27px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.gatestack-login-header h1 span {
+  color: #356dff;
+  font-weight: 500;
+}
+
+.gatestack-login-header p {
+  max-width: 300px;
+  min-height: 40px;
+  margin: 0;
+  color: #7b87aa;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.gatestack-login-fields {
+  display: grid;
+  gap: 18px;
+  margin-top: 32px;
+}
+
+.gatestack-auth-field {
+  display: grid;
+  gap: 8px;
+}
+
+.gatestack-auth-field > span {
+  color: #7480a2;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.gatestack-auth-input,
+body.light-theme .gatestack-auth-input {
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 15px;
+  border: 1px solid #d9deea;
+  border-radius: 14px;
+  background: #fbfbfd;
+  color: #8090b2;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.gatestack-auth-input:focus-within {
+  border-color: #356dff;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(53, 109, 255, 0.12);
+}
+
+.gatestack-login-card .gatestack-auth-input input,
+body.light-theme .gatestack-login-card .gatestack-auth-input input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: #202536;
+  box-shadow: none;
+  font-size: 15px;
+}
+
+.gatestack-login-card .gatestack-auth-input input::placeholder {
+  color: #9296a1;
+}
+
+.gatestack-login-submit,
+body.light-theme .gatestack-login-submit {
+  min-height: 46px;
+  margin-top: 22px;
+  border: 0;
+  border-radius: 23px;
+  background: #3c6ff0;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(60, 111, 240, 0.27);
+  font-size: 14px;
+  font-weight: 750;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.gatestack-login-submit:hover:not(:disabled) {
+  background: #2f62e8;
+  box-shadow: 0 10px 22px rgba(60, 111, 240, 0.34);
+  transform: translateY(-1px);
+}
+
+.gatestack-login-submit:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.gatestack-login-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(53, 109, 255, 0.15);
+  border-radius: 10px;
+  background: rgba(53, 109, 255, 0.06);
+  color: #3358aa;
+  font-size: 12px;
+  text-align: center;
+}
+
+.gatestack-auth-mode {
+  width: 100%;
+  margin-top: 15px;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: #6075aa;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gatestack-auth-mode:hover {
+  color: #356dff;
+}
+
+.gatestack-login-footer {
+  margin-top: 22px;
+  color: #7d89aa;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .gatestack-login-shell,
+  body.light-theme .gatestack-login-shell {
+    padding: 18px 14px;
+  }
+
+  .gatestack-login-card,
+  body.light-theme .gatestack-login-card {
+    padding: 34px 24px 28px;
+    border-radius: 20px;
+  }
+
+  .gatestack-login-header h1 {
+    margin-top: 18px;
+    font-size: 25px;
+  }
+
+  .gatestack-login-fields {
+    margin-top: 26px;
+  }
+}

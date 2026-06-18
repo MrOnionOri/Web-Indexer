@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://192.168.1.150:8000";
+const serverProtocol = (import.meta.env.VITE_SERVER_PROTOCOL || window.location.protocol.replace(":", "")).trim();
+const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname).trim();
+const backendPort = (import.meta.env.VITE_GATESTACK_BACKEND_PORT || "8000").trim();
+const configuredBackendUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
 
 export type UserStatus = "pending" | "approved" | "rejected" | "suspended";
 export type ProjectStatus =

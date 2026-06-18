@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, FormEvent } from "react";
+import React, { useState, useEffect, useMemo, useRef, FormEvent } from "react";
 import { X } from "lucide-react";
 
 // Import modular components
@@ -81,6 +81,7 @@ export default function App() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [aiChatOpen, setAiChatOpen] = useState(false);
+  const routeRequestRef = useRef(0);
 
   // Admin states
   const [seedSuccessMsg, setSeedSuccessMsg] = useState("");
@@ -177,6 +178,12 @@ export default function App() {
   const handleRouting = async () => {
     if (!token) return;
     const path = window.location.pathname;
+    const routeRequest = ++routeRequestRef.current;
+
+    if (!path.startsWith("/page/")) {
+      setActivePage(null);
+      setComments([]);
+    }
 
     if (path === "/" || path === "/dashboard") {
       setCurrentView("dashboard");
@@ -204,7 +211,8 @@ export default function App() {
       const id = segments[1];
       const subtopicIndex = segments[2] === "subtopic" ? Number.parseInt(segments[3] || "", 10) : null;
       setCurrentView("read");
-      await fetchAndSetActivePage(id, Number.isFinite(subtopicIndex) ? subtopicIndex : null);
+      setActivePage(null);
+      await fetchAndSetActivePage(id, Number.isFinite(subtopicIndex) ? subtopicIndex : null, routeRequest, path);
     } else if (path === "/edit") {
       setCurrentView("edit");
       setActiveSubtopicIndex(null);
@@ -231,14 +239,24 @@ export default function App() {
     }
   };
 
-  const fetchAndSetActivePage = async (id: string, subtopicIndex: number | null = null) => {
+  const fetchAndSetActivePage = async (
+    id: string,
+    subtopicIndex: number | null = null,
+    routeRequest?: number,
+    expectedPath?: string
+  ) => {
     try {
       const pageData = await api.page(token, id);
+      if (
+        (routeRequest !== undefined && routeRequest !== routeRequestRef.current) ||
+        (expectedPath && window.location.pathname !== expectedPath)
+      ) return;
       setActivePage(pageData);
       setActiveSpaceFilter(pageData.space_key);
       setActiveSubtopicIndex(subtopicIndex);
       fetchComments(id);
     } catch (error: any) {
+      if (routeRequest !== undefined && routeRequest !== routeRequestRef.current) return;
       alert(error.message);
       navigate("/dashboard");
     }
@@ -684,8 +702,12 @@ export default function App() {
       <FeedbackModal token={token} activePage={activePage} open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <AiChatModal
         token={token}
-        activePage={activePage}
-        activeSpaceFilter={activeSpaceFilter}
+        activePage={currentView === "read" ? activePage : null}
+        activeSpaceFilter={
+          currentView === "dashboard" || currentView === "space-settings" || currentView === "topic-order"
+            ? activeSpaceFilter
+            : null
+        }
         open={aiChatOpen}
         onClose={() => setAiChatOpen(false)}
         onReadPage={(id) => navigate(`/page/${id}`)}

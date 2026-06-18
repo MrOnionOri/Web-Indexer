@@ -12,6 +12,8 @@ dist/
 
 # Local env and storage
 .env
+.env.local
+.env.*.local
 backend/.env
 backend/storage/
 gatestorage/data/

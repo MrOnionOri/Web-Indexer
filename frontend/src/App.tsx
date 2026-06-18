@@ -2,19 +2,19 @@ import {
   AppWindow,
   Award,
   Database,
-  KeyRound,
-  Layers3,
+  LockKeyhole,
   LogOut,
+  Mail,
   Moon,
   ShieldCheck,
   ShieldX,
   SlidersHorizontal,
   Sun,
-  UploadCloud,
+  UserRound,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Me, PortalHomeSettings, ProjectUpload, RegisteredApp, Template, User, UserBadge } from "./api";
-import { Metric, NavButton } from "./components/ui";
+import { NavButton } from "./components/ui";
 import { AppsView } from "./views/AppsView";
 import { DashboardView } from "./views/DashboardView";
 import { FeedbackView } from "./views/FeedbackView";
@@ -280,43 +280,75 @@ export function App() {
       return <PasswordResetView token={resetToken} done={resetDone} onDone={() => setResetDone(true)} onBack={() => setResetToken("")} />;
     }
     return (
-      <main className="auth-shell">
-        <section className="auth-intro">
-          <div className="brand-mark">
-            <ShieldCheck size={32} />
+      <main className="auth-shell gatestack-login-shell">
+        <form className="auth-panel gatestack-login-card" onSubmit={handleAuth}>
+          <header className="gatestack-login-header">
+            <div className="brand-mark gatestack-login-mark">
+              <ShieldCheck size={27} />
+            </div>
+            <h1>Gate<span>Stack</span></h1>
+            <p>
+              {mode === "login"
+                ? "Inicia sesión con tus credenciales unificadas"
+                : "Solicita acceso a la plataforma GateStack"}
+            </p>
+          </header>
+
+          <div className="gatestack-login-fields">
+            {mode === "register" && (
+              <label className="gatestack-auth-field">
+                <span>Nombre completo</span>
+                <div className="gatestack-auth-input">
+                  <UserRound size={18} />
+                  <input name="fullName" placeholder="Tu nombre completo" required minLength={2} autoComplete="name" />
+                </div>
+              </label>
+            )}
+
+            <label className="gatestack-auth-field">
+              <span>Correo electrónico</span>
+              <div className="gatestack-auth-input">
+                <Mail size={18} />
+                <input name="email" placeholder="ejemplo@gatestack.dev" type="email" required autoComplete="email" />
+              </div>
+            </label>
+
+            <label className="gatestack-auth-field">
+              <span>Contraseña</span>
+              <div className="gatestack-auth-input">
+                <LockKeyhole size={18} />
+                <input
+                  name="password"
+                  placeholder="Ingresa tu contraseña"
+                  type="password"
+                  required
+                  minLength={10}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                />
+              </div>
+            </label>
           </div>
-          <h1>GateStack</h1>
-          <p>Una consola limpia para controlar acceso, permisos y revisión segura de aplicaciones internas.</p>
-          <div className="auth-grid">
-            <Metric icon={<KeyRound />} label="Identity" value="Approval flow" />
-            <Metric icon={<Layers3 />} label="Access matrix" value="Templates" />
-            <Metric icon={<UploadCloud />} label="Deploy intake" value="Pre-review" />
-          </div>
-        </section>
-        <form className="auth-panel" onSubmit={handleAuth}>
-          <button
-            type="button"
-            className="theme-toggle auth-theme-toggle"
-            onClick={() => setTheme((value) => value === "light" ? "dark" : "light")}
-            title={theme === "light" ? "Cambiar a modo noche" : "Cambiar a modo dia"}
-          >
-            {theme === "light" ? <Moon /> : <Sun />}
-          </button>
-          <div className="tabs">
-            <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
-              Entrar
-            </button>
-            <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
-              Registro
-            </button>
-          </div>
-          {mode === "register" && <input name="fullName" placeholder="Nombre completo" required minLength={2} />}
-          <input name="email" placeholder="Email" type="email" required />
-          <input name="password" placeholder="Password" type="password" required minLength={10} />
-          <button className="primary" disabled={loading}>
+
+          <button className="primary gatestack-login-submit" disabled={loading}>
             {loading ? "Procesando..." : mode === "login" ? "Iniciar sesión" : "Solicitar acceso"}
           </button>
-          {error && <p className="form-note">{error}</p>}
+
+          {error && <p className="form-note gatestack-login-note">{error}</p>}
+
+          <button
+            type="button"
+            className="gatestack-auth-mode"
+            onClick={() => {
+              setMode((current) => current === "login" ? "register" : "login");
+              setError("");
+            }}
+          >
+            {mode === "login" ? "Solicitar una cuenta" : "Ya tengo una cuenta"}
+          </button>
+
+          <footer className="gatestack-login-footer">
+            Autenticación segura mediante GateStack IAM (MySQL)
+          </footer>
         </form>
       </main>
     );
