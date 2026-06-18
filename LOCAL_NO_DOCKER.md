@@ -11,20 +11,20 @@ Esta rama permite correr GateStack, GateWiki y GateStorage directo en Windows us
 - GateWiki web: `http://192.168.1.150:5174`
 - GateStorage web: `http://192.168.1.150:5175`
 
-## Primera instalacion
+## Arranque automatico
 
 Desde la raiz del repo:
 
 ```powershell
-.\scripts\install-local.ps1 -DbPassword "TU_PASSWORD_MYSQL"
+.\scripts\run-local.ps1
 ```
 
-Ese script crea `venv` en cada backend, instala dependencias Python, corre `npm install` en cada frontend y crea la base `gatestack` si tienes `mysql` en PATH.
+El script detecta la IPv4 de la PC, crea los entornos con Python 3.11, instala dependencias faltantes y arranca los seis servicios. La configuracion y credenciales se leen del `.env` incluido en la raiz.
 
 ## Arrancar todo
 
 ```powershell
-.\scripts\start-local.ps1 -HostIp "192.168.1.150" -DbPassword "TU_PASSWORD_MYSQL"
+.\scripts\start-local.ps1
 ```
 
 Los procesos arrancan en background y dejan logs en:
@@ -46,4 +46,4 @@ logs/local/
 - GateWiki usa GateStack IAM con `GATESTACK_API_URL`.
 - GateWiki usa GateStorage con `GATESTORAGE_API_URL`.
 - Todos los backends deben compartir `DATA_ENCRYPTION_KEY` para leer columnas cifradas.
-- Si cambias tu IPv4, vuelve a arrancar con `-HostIp "TU_IPV4"`.
+- La IPv4 se detecta automaticamente. Todavia puedes forzarla con `-HostIp "TU_IPV4"`.

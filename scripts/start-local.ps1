@@ -1,7 +1,7 @@
 param(
-  [string]$HostIp = "192.168.1.150",
-  [string]$DbHost = "localhost",
-  [string]$DbPort = "3306",
+  [string]$HostIp = "",
+  [string]$DbHost = "",
+  [string]$DbPort = "",
   [string]$DbUser = "",
   [string]$DbPassword = "",
   [string]$DbName = "gatestack",
@@ -30,12 +30,17 @@ function Import-DotEnv {
 
 Import-DotEnv (Join-Path $Root ".env")
 
-if (-not $DbUser) {
-  $DbUser = if ($env:GATESTACK_DB_USER) { $env:GATESTACK_DB_USER } else { "gatestack_app" }
+if (-not $HostIp) {
+  $HostIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+    Sort-Object InterfaceMetric |
+    Select-Object -First 1 -ExpandProperty IPAddress
+  if (-not $HostIp) { $HostIp = "127.0.0.1" }
 }
-if (-not $DbPassword -and $env:GATESTACK_DB_PASSWORD) {
-  $DbPassword = $env:GATESTACK_DB_PASSWORD
+if (-not $DbHost) {
+  $DbHost = if ($env:DB_HOST -and $env:DB_HOST -ne "host.docker.internal") { $env:DB_HOST } else { "localhost" }
 }
+if (-not $DbPort) { $DbPort = if ($env:DB_PORT) { $env:DB_PORT } else { "3306" } }
 if (-not $SecretKey) {
   $SecretKey = $env:SECRET_KEY
 }
@@ -47,9 +52,6 @@ if (-not $SecretKey -or $SecretKey.Length -lt 32) {
 }
 if (-not $DataEncryptionKey -or $DataEncryptionKey.Length -lt 32) {
   throw "DATA_ENCRYPTION_KEY must be set in .env or passed as -DataEncryptionKey with at least 32 characters."
-}
-if (-not $DbPassword) {
-  $DbPassword = Read-Host "MySQL password"
 }
 $LogDir = Join-Path $Root "logs\local"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -84,8 +86,6 @@ function Start-LocalProcess {
 
 $env:DB_HOST = $DbHost
 $env:DB_PORT = $DbPort
-$env:DB_USER = $DbUser
-$env:DB_PASSWORD = $DbPassword
 $env:DB_NAME = $DbName
 $env:DB_TABLE_PREFIX = ""
 $env:SECRET_KEY = $SecretKey
@@ -95,9 +95,11 @@ $env:GATESTACK_API_URL = "http://${HostIp}:8000"
 $env:GATESTORAGE_API_URL = "http://${HostIp}:8002"
 $env:STORAGE_ROOT = (Join-Path $Root "gatestorage\data\storage")
 $env:BACKEND_CORS_ORIGINS = "http://${HostIp}:5173,http://${HostIp}:5174,http://${HostIp}:5175,http://${HostIp}:8001,http://localhost:5173,http://localhost:5174,http://localhost:5175"
-$env:VITE_API_BASE_URL = "http://${HostIp}:8000"
-$env:VITE_GATEWIKI_BACKEND_URL = "http://${HostIp}:8001"
-$env:VITE_GATESTORAGE_BACKEND_URL = "http://${HostIp}:8002"
+$env:VITE_SERVER_HOST = $HostIp
+$env:VITE_SERVER_PROTOCOL = "http"
+$env:VITE_GATESTACK_BACKEND_PORT = "8000"
+$env:VITE_GATEWIKI_BACKEND_PORT = "8001"
+$env:VITE_GATESTORAGE_BACKEND_PORT = "8002"
 
 $gateStackBackend = Join-Path $Root "backend"
 $gateWikiBackend = Join-Path $Root "confluence\backend"
@@ -112,8 +114,16 @@ if ($npmCommand) {
   $npm = "npm"
 }
 
+$env:DB_USER = if ($DbUser) { $DbUser } elseif ($env:GATESTACK_DB_USER) { $env:GATESTACK_DB_USER } else { "gatestack_app" }
+$env:DB_PASSWORD = if ($DbPassword) { $DbPassword } else { $env:GATESTACK_DB_PASSWORD }
 Start-LocalProcess "gatestack-api" (Get-PythonPath $gateStackBackend) @("-m", "uvicorn", "app.main:app", "--host", $HostIp, "--port", "8000", "--reload") $gateStackBackend
+
+$env:DB_USER = if ($DbUser) { $DbUser } elseif ($env:GATEWIKI_DB_USER) { $env:GATEWIKI_DB_USER } else { "gatewiki_app" }
+$env:DB_PASSWORD = if ($DbPassword) { $DbPassword } else { $env:GATEWIKI_DB_PASSWORD }
 Start-LocalProcess "gatewiki-api" (Get-PythonPath $gateWikiBackend) @("-m", "uvicorn", "main:app", "--host", $HostIp, "--port", "8001", "--reload") $gateWikiBackend
+
+$env:DB_USER = if ($DbUser) { $DbUser } elseif ($env:GATESTORAGE_DB_USER) { $env:GATESTORAGE_DB_USER } else { "gatestorage_app" }
+$env:DB_PASSWORD = if ($DbPassword) { $DbPassword } else { $env:GATESTORAGE_DB_PASSWORD }
 Start-LocalProcess "gatestorage-api" (Get-PythonPath $gateStorageBackend) @("-m", "uvicorn", "main:app", "--host", $HostIp, "--port", "8002", "--reload") $gateStorageBackend
 
 Start-LocalProcess "gatestack-web" $npm @("run", "dev", "--", "--host", $HostIp, "--port", "5173") $gateStackFrontend

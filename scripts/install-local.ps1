@@ -6,16 +6,45 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
+
+function Import-DotEnv {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  Get-Content $Path | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) { return }
+    $name, $value = $line.Split("=", 2)
+    if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
+Import-DotEnv (Join-Path $Root ".env")
+
 if (-not $DbPassword) {
-  $DbPassword = Read-Host "MySQL password"
+  $DbPassword = $env:MYSQL_ROOT_PASSWORD
+}
+
+function New-PythonVenv {
+  param([string]$Path)
+  $py = Get-Command py.exe -ErrorAction SilentlyContinue
+  if ($py) {
+    & $py.Source -3.11 -m venv (Join-Path $Path "venv")
+    return
+  }
+  $python = Get-Command python.exe -ErrorAction Stop
+  $version = & $python.Source -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+  if ($version -ne "3.11") {
+    throw "Python 3.11 x64 is required. Installed version: $version"
+  }
+  & $python.Source -m venv (Join-Path $Path "venv")
 }
 
 function Ensure-Venv {
   param([string]$Path)
   if (-not (Test-Path (Join-Path $Path "venv\Scripts\python.exe"))) {
-    Push-Location $Path
-    python -m venv venv
-    Pop-Location
+    New-PythonVenv $Path
   }
 }
 
@@ -48,8 +77,10 @@ npm install
 Pop-Location
 
 $mysql = Get-Command mysql -ErrorAction SilentlyContinue
-if ($mysql) {
+if ($mysql -and $DbPassword) {
   & $mysql.Source -u $DbUser "-p$DbPassword" -e "CREATE DATABASE IF NOT EXISTS $DbName CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+} elseif ($mysql) {
+  Write-Warning "MYSQL_ROOT_PASSWORD is not set. Database creation was skipped."
 } else {
   Write-Warning "mysql CLI no esta en PATH. Crea manualmente la base '$DbName' si no existe."
 }
