@@ -11,9 +11,8 @@ dist/
 *.log
 
 # Local env and storage
-.env.local
-.env.*.local
-backend/.env
+
+
 backend/storage/
 gatestorage/data/
 frontend/gatestack-preview.png
