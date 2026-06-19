@@ -23,6 +23,7 @@ interface ChatTurn {
 
 interface AiChatModalProps {
   token: string | null;
+  userId: string;
   activePage: Page | null;
   activeSpaceFilter: string | null;
   open: boolean;
@@ -38,14 +39,17 @@ const GENERAL_PROMPTS = [
 
 export default function AiChatModal({
   token,
+  userId,
   activePage,
   activeSpaceFilter,
   open,
   onClose,
   onReadPage
 }: AiChatModalProps) {
+  const storageKey = `gatewiki_ai_chat:${userId}`;
   const [message, setMessage] = useState("");
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [sessionId, setSessionId] = useState(() => loadConversation(storageKey).sessionId);
+  const [turns, setTurns] = useState<ChatTurn[]>(() => loadConversation(storageKey).turns);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -58,12 +62,6 @@ export default function AiChatModal({
     : activeSpaceFilter
       ? `Workspace ${activeSpaceFilter}`
       : "Todos los wikis visibles";
-  const scopeKey = activePage
-    ? `page:${activePage.id}`
-    : activeSpaceFilter
-      ? `space:${activeSpaceFilter}`
-      : "all";
-  const previousScopeRef = useRef(scopeKey);
 
   const suggestions = useMemo(() => {
     if (activePage) {
@@ -95,13 +93,17 @@ export default function AiChatModal({
   }, [open]);
 
   useEffect(() => {
-    if (previousScopeRef.current === scopeKey) return;
-    previousScopeRef.current = scopeKey;
-    setTurns([]);
+    const stored = loadConversation(storageKey);
+    setSessionId(stored.sessionId);
+    setTurns(stored.turns);
     setExpandedSources(new Set());
     setError("");
     setMessage("");
-  }, [scopeKey]);
+  }, [storageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(storageKey, JSON.stringify({ sessionId, turns }));
+  }, [sessionId, storageKey, turns]);
 
   if (!open) return null;
 
@@ -115,6 +117,8 @@ export default function AiChatModal({
     try {
       const response = await api.aiChat(token, {
         message: cleanBody,
+        session_id: sessionId,
+        history: turns.slice(-4).map((turn) => ({ question: turn.question, answer: turn.response.answer })),
         space_key: activePage ? activePage.space_key : activeSpaceFilter,
         page_id: activePage?.id ?? null
       });
@@ -157,6 +161,7 @@ export default function AiChatModal({
   }
 
   function clearConversation() {
+    setSessionId(createSessionId());
     setTurns([]);
     setExpandedSources(new Set());
     setError("");
@@ -251,16 +256,19 @@ export default function AiChatModal({
                             className="ai-chat-source"
                             key={`${turn.id}-${source.page_id}-${source.score}`}
                             onClick={() => {
-                              onReadPage(source.page_id);
-                              onClose();
+                              if (source.page_id) {
+                                onReadPage(source.page_id);
+                                onClose();
+                              }
                             }}
+                            disabled={!source.page_id}
                           >
                             <span className="ai-chat-source-icon"><BookOpen size={15} /></span>
                             <span className="ai-chat-source-copy">
                               <strong>{source.page_title}</strong>
-                              <small>{source.space_key} · relevancia {source.score.toFixed(1)}</small>
+                              <small>{source.space_key}{source.subtopic_title ? ` · ${source.subtopic_title}` : ""} · relevancia {source.score.toFixed(1)}</small>
                             </span>
-                            <ExternalLink size={14} />
+                            {source.page_id && <ExternalLink size={14} />}
                           </button>
                         ))}
                       </div>
@@ -304,4 +312,22 @@ export default function AiChatModal({
       </section>
     </div>
   );
+}
+
+function createSessionId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`.slice(0, 36);
+}
+
+function loadConversation(storageKey: string): { sessionId: string; turns: ChatTurn[] } {
+  try {
+    const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (stored && typeof stored.sessionId === "string" && Array.isArray(stored.turns)) {
+      return { sessionId: stored.sessionId, turns: stored.turns };
+    }
+  } catch {
+    // Un historial local corrupto no debe impedir abrir el asistente.
+  }
+  return { sessionId: createSessionId(), turns: [] };
 }

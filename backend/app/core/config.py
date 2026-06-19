@@ -1,8 +1,11 @@
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote_plus
 
-from pydantic import AnyHttpUrl, field_validator, model_validator
+from pydantic import AliasChoices, AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
@@ -15,15 +18,15 @@ class Settings(BaseSettings):
     database_url: str | None = None
     db_host: str = "127.0.0.1"
     db_port: int = 3306
-    db_user: str = "root"
-    db_password: str = ""
+    db_user: str = Field(default="root", validation_alias=AliasChoices("DB_USER", "GATESTACK_DB_USER"))
+    db_password: str = Field(default="", validation_alias=AliasChoices("DB_PASSWORD", "GATESTACK_DB_PASSWORD"))
     db_name: str = "gatestack"
     db_table_prefix: str = ""
     backend_cors_origins: list[AnyHttpUrl] | list[str] = ["http://192.168.1.150:5173", "http://192.168.1.150:8001", "http://192.168.1.150:5174", "http://192.168.1.150:5175"]
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=(ROOT_ENV, ".env"), env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod

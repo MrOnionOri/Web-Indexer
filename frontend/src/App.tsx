@@ -5,6 +5,7 @@ import {
   LockKeyhole,
   LogOut,
   Mail,
+  MessageCircle,
   Moon,
   ShieldCheck,
   ShieldX,
@@ -20,14 +21,17 @@ import { DashboardView } from "./views/DashboardView";
 import { FeedbackView } from "./views/FeedbackView";
 import { HomeAdminView } from "./views/HomeAdminView";
 import { IntegrationView } from "./views/IntegrationView";
+import { AgentSupportView } from "./views/AgentSupportView";
+import { SupportChatEmbed } from "./views/SupportChatEmbed";
 import { PasswordResetView } from "./views/PasswordResetView";
 import { ProjectsView } from "./views/ProjectsView";
 import { SecurityView } from "./views/SecurityView";
 import { UserViewMode, UsersView } from "./views/UsersView";
 
-type View = "dashboard" | "apps" | "users" | "admin-apps" | "admin-home" | "feedback" | "projects" | "security" | "integration";
+type View = "dashboard" | "apps" | "chat" | "users" | "admin-apps" | "admin-home" | "feedback" | "projects" | "security" | "integration";
 
 function routeState(pathname: string): { view: View; userViewMode: UserViewMode } {
+  if (pathname.startsWith("/chat")) return { view: "chat", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/users/accounts")) return { view: "users", userViewMode: "crud" };
   if (pathname.startsWith("/admin/users")) return { view: "users", userViewMode: "permissions" };
   if (pathname.startsWith("/admin/apps")) return { view: "admin-apps", userViewMode: "permissions" };
@@ -43,6 +47,7 @@ function routeState(pathname: string): { view: View; userViewMode: UserViewMode 
 function routePath(view: View, userViewMode: UserViewMode = "permissions") {
   if (view === "dashboard") return "/dashboard";
   if (view === "apps") return "/apps";
+  if (view === "chat") return "/chat";
   if (view === "users") return userViewMode === "crud" ? "/admin/users/accounts" : "/admin/users/permissions";
   if (view === "admin-apps") return "/admin/apps";
   if (view === "admin-home") return "/admin/home";
@@ -54,6 +59,8 @@ function routePath(view: View, userViewMode: UserViewMode = "permissions") {
 }
 
 export function App() {
+  const isEmbeddedChat = window.location.pathname.startsWith("/support/embed");
+  const supportSource = new URLSearchParams(window.location.search).get("source") || "gatestack";
   const [me, setMe] = useState<Me | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [badges, setBadges] = useState<UserBadge[]>([]);
@@ -89,6 +96,7 @@ export function App() {
     can.has("projects:review") ||
     can.has("templates:view") ||
     can.has("users:permissions");
+  const canRespondSupport = me?.is_platform_admin || can.has("feedback:respond");
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -354,6 +362,10 @@ export function App() {
     );
   }
 
+  if (isEmbeddedChat) {
+    return <main className="chat-embed-shell"><SupportChatEmbed me={me} sourceApp={supportSource} /></main>;
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -364,6 +376,7 @@ export function App() {
         <div className="nav-section-label">Portal</div>
         <NavButton icon={<Database />} active={view === "dashboard"} onClick={() => navigate("dashboard")} label="Dashboard" />
         <NavButton icon={<AppWindow />} active={view === "apps"} onClick={() => navigate("apps")} label="Apps" />
+        {canRespondSupport && <NavButton icon={<MessageCircle />} active={view === "chat"} onClick={() => navigate("chat")} label="Soporte en vivo" />}
         {canUseAdminTools && (
           <div className="nav-category">
             <div className={`nav-category-title ${adminToolsActive ? "active" : ""}`}>
@@ -490,6 +503,7 @@ export function App() {
           />
         )}
         {view === "apps" && <AppsView apps={apps} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} />}
+        {view === "chat" && canRespondSupport && <AgentSupportView me={me} />}
         {view === "admin-apps" && (
           <AppsView apps={apps} permissions={me.permissions} refresh={() => setRefreshCount((c) => c + 1)} mode="admin" />
         )}
@@ -532,6 +546,7 @@ function viewTitle(view: View) {
   const titles: Record<View, string> = {
     dashboard: "Dashboard",
     apps: "Aplicaciones",
+    chat: "Soporte en vivo",
     users: "Gestion de usuarios",
     "admin-apps": "Admin de aplicaciones",
     "admin-home": "Personalizar home",

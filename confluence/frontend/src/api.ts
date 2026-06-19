@@ -30,6 +30,7 @@ const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname
 const backendPort = (import.meta.env.VITE_GATEWIKI_BACKEND_PORT || "8001").trim();
 const configuredBackendUrl = import.meta.env.VITE_GATEWIKI_BACKEND_URL?.trim();
 const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
+export const GATESTACK_CHAT_EMBED_URL = `${serverProtocol}://${serverHost}:${(import.meta.env.VITE_GATESTACK_FRONTEND_PORT || "5173").trim()}/support/embed?source=gatewiki`;
 
 export interface Space {
   id: string;
@@ -148,9 +149,11 @@ export interface StorageRequest {
 }
 
 export interface AiChatSource {
-  page_id: string;
+  page_id?: string | null;
   page_title: string;
   space_key: string;
+  source_type?: "page" | "workspace" | string;
+  subtopic_title?: string | null;
   excerpt: string;
   score: number;
 }
@@ -159,6 +162,33 @@ export interface AiChatResponse {
   answer: string;
   sources: AiChatSource[];
   searched_pages: number;
+}
+
+export type AiReviewStatus = "unreviewed" | "expected" | "unexpected";
+
+export interface AiInteraction {
+  id: string;
+  session_id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  question: string;
+  answer: string;
+  scope_type: "all" | "space" | "page";
+  space_key?: string | null;
+  page_id?: string | null;
+  page_title?: string | null;
+  engine: "system" | "ollama" | "retrieval" | string;
+  model_name?: string | null;
+  searched_pages: number;
+  source_count: number;
+  sources: AiChatSource[];
+  duration_ms: number;
+  review_status: AiReviewStatus;
+  review_note: string;
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
 }
 
 type RequestOptions = Omit<RequestInit, "headers"> & {
@@ -209,6 +239,14 @@ export const api = {
   users: (token: string | null) => request<UserListItem[]>("/api/users", { token }),
   myFeedback: (token: string | null) => request<FeedbackItem[]>("/api/feedback/my", { token }),
   adminFeedback: (token: string | null) => request<FeedbackItem[]>("/api/feedback/admin", { token }),
+  adminAiInteractions: (token: string | null, reviewStatus?: AiReviewStatus) =>
+    request<AiInteraction[]>(`/api/ai-interactions/admin${reviewStatus ? `?review_status=${reviewStatus}` : ""}`, { token }),
+  reviewAiInteraction: (token: string | null, interactionId: string, reviewStatus: AiReviewStatus, reviewNote: string) =>
+    request<AiInteraction>(`/api/ai-interactions/${interactionId}/review`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ review_status: reviewStatus, review_note: reviewNote })
+    }),
   createFeedback: (token: string | null, payload: unknown) =>
     request<FeedbackItem>("/api/feedback", { method: "POST", token, body: JSON.stringify(payload) }),
   respondFeedback: (token: string | null, feedbackId: string, publicResponse: string) =>
@@ -273,7 +311,7 @@ export const api = {
   deleteComment: (token: string | null, commentId: string) =>
     request<void>(`/api/comments/${commentId}`, { method: "DELETE", token }),
   seed: (token: string | null) => request<{ message: string }>("/api/seed", { method: "POST", token }),
-  aiChat: (token: string | null, payload: { message: string; space_key?: string | null; page_id?: string | null }) =>
+  aiChat: (token: string | null, payload: { message: string; session_id: string; history?: Array<{ question: string; answer: string }>; space_key?: string | null; page_id?: string | null }) =>
     request<AiChatResponse>("/api/ai-chat", {
       method: "POST",
       token,

@@ -13,6 +13,7 @@ from typing import List, Optional
 
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -21,10 +22,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, Text, UniqueConstraint, create_engine, or_, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
+for parent in Path(__file__).resolve().parents:
+    env_path = parent / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path)
+        break
+
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "gatestorage_app")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_USER = os.getenv("DB_USER") or os.getenv("GATESTORAGE_DB_USER", "gatestorage_app")
+DB_PASSWORD = os.getenv("DB_PASSWORD") or os.getenv("GATESTORAGE_DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower()
 GATESTACK_API_URL = os.getenv("GATESTACK_API_URL", "http://192.168.1.150:8000").rstrip("/")

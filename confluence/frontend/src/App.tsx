@@ -702,6 +702,7 @@ export default function App() {
       <FeedbackModal token={token} activePage={activePage} open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <AiChatModal
         token={token}
+        userId={currentUser?.id || currentUser?.email || "anonymous"}
         activePage={currentView === "read" ? activePage : null}
         activeSpaceFilter={
           currentView === "dashboard" || currentView === "space-settings" || currentView === "topic-order"

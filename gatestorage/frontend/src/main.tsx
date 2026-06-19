@@ -111,6 +111,7 @@ const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname
 const backendPort = (import.meta.env.VITE_GATESTORAGE_BACKEND_PORT || "8002").trim();
 const configuredBackendUrl = import.meta.env.VITE_GATESTORAGE_BACKEND_URL?.trim();
 const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
+const GATESTACK_CHAT_EMBED_URL = `${serverProtocol}://${serverHost}:${(import.meta.env.VITE_GATESTACK_FRONTEND_PORT || "5173").trim()}/support/embed?source=gatestorage`;
 
 type StorageView = "mine" | "admin";
 
@@ -757,17 +758,10 @@ function FeedbackCenter({
   const [workspaceId, setWorkspaceId] = useState("");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
-  const [chatMessage, setChatMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [chatSaving, setChatSaving] = useState(false);
-  const [reopenChat, setReopenChat] = useState(false);
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
-  const chatItems = feedbackItems.filter((item) => item.category === "admin_contact").slice().reverse();
   const supportItems = feedbackItems.filter((item) => item.category !== "admin_contact");
-  const latestChat = chatItems[chatItems.length - 1];
-  const chatClosed = latestChat?.status === "closed" && !reopenChat;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -775,10 +769,6 @@ function FeedbackCenter({
     }, 5000);
     return () => window.clearInterval(timer);
   }, [onReloaded]);
-
-  useEffect(() => {
-    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatItems.length]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -803,81 +793,14 @@ function FeedbackCenter({
     }
   }
 
-  async function sendChat(event: FormEvent) {
-    event.preventDefault();
-    const body = chatMessage.trim();
-    if (!body) return;
-    setNotice("");
-    setChatSaving(true);
-    try {
-      const item = await api.createFeedback({
-        category: "admin_contact",
-        title: "Chat con admin",
-        message: body.length < 5 ? body.padEnd(5, " ") : body,
-        workspace_id: selectedWorkspace?.id ?? null,
-        workspace_name: selectedWorkspace?.workspace_name ?? null
-      });
-      onCreated(item);
-      setChatMessage("");
-      setReopenChat(false);
-    } catch (err: any) {
-      setNotice(err.message ?? "No se pudo enviar el mensaje.");
-    } finally {
-      setChatSaving(false);
-    }
-  }
-
   return (
     <div className={`feedback-layout feedback-layout-${mode}`}>
       {mode !== "feedback" && <section className="panel admin-chat-panel">
         <div className="section-title">
-          <h3>Chat con admin</h3>
-          <span>Actualiza en vivo</span>
+          <h3>Ayuda con un administrador</h3>
+          <span>Soporte breve en vivo</span>
         </div>
-        <label className="chat-workspace-picker">
-          Workspace
-          <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
-            <option value="">General</option>
-            {workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.workspace_name}</option>)}
-          </select>
-        </label>
-        <div className="chat-thread" ref={chatScrollRef}>
-          {chatItems.length === 0 && (
-            <div className="chat-empty">
-              <MessageSquare />
-              <strong>Sin mensajes todavia</strong>
-              <span>Escribe abajo para abrir una conversacion con administracion.</span>
-            </div>
-          )}
-          {chatItems.map((item) => (
-            <React.Fragment key={item.id}>
-              <div className="chat-bubble mine">
-                <p>{item.message}</p>
-                <span>{new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - {item.status}</span>
-              </div>
-              {item.public_response && (
-                <div className="chat-bubble admin">
-                  <strong>{item.responded_by_name || "Admin"}</strong>
-                  <p>{item.public_response}</p>
-                  {item.responded_at && <span>{new Date(item.responded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
-                </div>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-        <form className="chat-composer" onSubmit={sendChat}>
-          {chatClosed ? (
-            <>
-              <input value="Este chat fue cerrado por admin." readOnly />
-              <button type="button" onClick={() => setReopenChat(true)}>Abrir nuevo chat</button>
-            </>
-          ) : (
-            <>
-              <input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Escribe un mensaje para admin..." />
-              <button disabled={chatSaving || !chatMessage.trim()} title="Enviar"><Send /></button>
-            </>
-          )}
-        </form>
+        <iframe className="team-chat-embed" src={GATESTACK_CHAT_EMBED_URL} title="Ayuda con un administrador" />
         {notice && <p className="row-notice">{notice}</p>}
       </section>}
 

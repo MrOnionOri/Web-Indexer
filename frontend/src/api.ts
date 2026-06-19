@@ -3,6 +3,7 @@ const serverHost = (import.meta.env.VITE_SERVER_HOST || window.location.hostname
 const backendPort = (import.meta.env.VITE_GATESTACK_BACKEND_PORT || "8000").trim();
 const configuredBackendUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
+export const CHAT_WS_URL = `${API_BASE_URL.replace(/^http/, "ws")}/chat/ws`;
 
 export type UserStatus = "pending" | "approved" | "rejected" | "suspended";
 export type ProjectStatus =
@@ -124,6 +125,37 @@ export interface FeedbackItem {
   created_at: string;
   updated_at: string;
   internal_notes: FeedbackInternalNote[];
+}
+
+export interface ChatUser {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+export interface ChatConversation {
+  id: string;
+  source_app: string;
+  status: "open" | "claimed" | "closed";
+  requester: ChatUser;
+  claimed_by: ChatUser | null;
+  last_message: string;
+  last_message_at: string | null;
+  unread_count: number;
+  created_at: string;
+  claimed_at: string | null;
+  closed_at: string | null;
+  /** Compatibilidad temporal con el chat directo anterior. */
+  other_user: ChatUser;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  sender_user_id: string;
+  sender_name: string;
+  body: string;
+  created_at: string;
 }
 
 export interface PortalHomeSettings {
@@ -278,6 +310,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ note }),
     }),
+  currentSupportChat: (sourceApp: string) => request<ChatConversation | null>(`/chat/support/current?source_app=${encodeURIComponent(sourceApp)}`),
+  chatUsers: () => request<ChatUser[]>("/chat/users"),
+  chatConversations: () => request<ChatConversation[]>("/chat/conversations"),
+  createChatConversation: (userId: string) => request<ChatConversation>("/chat/conversations", { method: "POST", body: JSON.stringify({ user_id: userId }) }),
+  createSupportChat: (sourceApp: string, message: string) =>
+    request<ChatConversation>("/chat/support", {
+      method: "POST",
+      body: JSON.stringify({ source_app: sourceApp, message }),
+    }),
+  supportQueue: (scope: "open" | "mine" | "closed" | "all") => request<ChatConversation[]>(`/chat/support/admin/queue?scope=${scope}`),
+  claimSupportChat: (conversationId: string) => request<ChatConversation>(`/chat/support/${conversationId}/claim`, { method: "POST" }),
+  closeSupportChat: (conversationId: string) => request<ChatConversation>(`/chat/support/${conversationId}/close`, { method: "POST" }),
+  chatMessages: (conversationId: string) => request<ChatMessage[]>(`/chat/support/${conversationId}/messages`),
+  sendChatMessage: (conversationId: string, body: string) =>
+    request<ChatMessage>(`/chat/support/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  markChatRead: (conversationId: string) =>
+    request<void>(`/chat/support/${conversationId}/read`, { method: "POST" }),
   homeSettings: () => request<PortalHomeSettings>("/portal/home"),
   updateHomeSettings: (settings: Omit<PortalHomeSettings, "id" | "updated_at">) =>
     request<PortalHomeSettings>("/portal/home", {

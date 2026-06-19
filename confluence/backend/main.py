@@ -2,10 +2,16 @@ import os
 import uuid
 import base64
 import hashlib
+import json
 import re
+import time
+import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 import requests
+from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -18,11 +24,17 @@ from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, I
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
+for parent in Path(__file__).resolve().parents:
+    env_path = parent / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path)
+        break
+
 # ----------------- CONFIGURACIÃ“N & DB (MySQL) -----------------
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "gatewiki_app")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_USER = os.getenv("DB_USER") or os.getenv("GATEWIKI_DB_USER", "gatewiki_app")
+DB_PASSWORD = os.getenv("DB_PASSWORD") or os.getenv("GATEWIKI_DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower()
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -174,6 +186,33 @@ class FeedbackItemModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+class AiInteractionModel(Base):
+    __tablename__ = "gatewiki_ai_interactions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), nullable=False, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), nullable=False, index=True)
+    user_name = Column(String(160), nullable=False)
+    user_email = Column(String(255), nullable=False, index=True)
+    question = Column(LONGTEXT, nullable=False)
+    answer = Column(LONGTEXT, nullable=False)
+    scope_type = Column(String(20), nullable=False, default="all", index=True)
+    space_key = Column(String(20), nullable=True, index=True)
+    page_id = Column(String(36), nullable=True, index=True)
+    page_title = Column(String(180), nullable=True)
+    engine = Column(String(40), nullable=False, index=True)
+    model_name = Column(String(120), nullable=True)
+    searched_pages = Column(Integer, nullable=False, default=0)
+    source_count = Column(Integer, nullable=False, default=0)
+    sources_json = Column(LONGTEXT, nullable=False)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    review_status = Column(String(24), nullable=False, default="unreviewed", index=True)
+    review_note = Column(LONGTEXT, nullable=False)
+    reviewed_by_user_id = Column(String(36), nullable=True)
+    reviewed_by_name = Column(String(160), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
 def init_db_for_local_dev() -> None:
     Base.metadata.create_all(bind=engine)
 
@@ -214,6 +253,14 @@ def init_db_for_local_dev() -> None:
             existing_f_cols = {row[0] for row in f_result.fetchall()}
             if "public_response" not in existing_f_cols:
                 conn.execute(text("ALTER TABLE feedback_items ADD COLUMN public_response TEXT NULL"))
+
+            ai_result = conn.execute(text("SHOW COLUMNS FROM gatewiki_ai_interactions"))
+            existing_ai_cols = {row[0] for row in ai_result.fetchall()}
+            if "session_id" not in existing_ai_cols:
+                conn.execute(text("ALTER TABLE gatewiki_ai_interactions ADD COLUMN session_id VARCHAR(36) NULL AFTER id"))
+                conn.execute(text("UPDATE gatewiki_ai_interactions SET session_id = id WHERE session_id IS NULL"))
+                conn.execute(text("ALTER TABLE gatewiki_ai_interactions MODIFY COLUMN session_id VARCHAR(36) NOT NULL"))
+                conn.execute(text("CREATE INDEX ix_gatewiki_ai_interactions_session_id ON gatewiki_ai_interactions (session_id)"))
                 
             conn.commit()
     except Exception as e:
@@ -406,17 +453,26 @@ class StorageRequestCreate(BaseModel):
     reason: str = ""
 
 
+class AiChatHistoryTurn(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1200)
+    answer: str = Field(default="", max_length=5000)
+
+
 class AiChatRequest(BaseModel):
     message: str = Field(..., min_length=2, max_length=1200)
+    session_id: Optional[str] = Field(default=None, min_length=8, max_length=36)
+    history: List[AiChatHistoryTurn] = Field(default_factory=list, max_length=6)
     space_key: Optional[str] = None
     page_id: Optional[str] = None
     max_sources: int = Field(default=5, ge=1, le=8)
 
 
 class AiChatSource(BaseModel):
-    page_id: str
+    page_id: Optional[str] = None
     page_title: str
     space_key: str
+    source_type: str = "page"
+    subtopic_title: Optional[str] = None
     excerpt: str
     score: float
 
@@ -425,6 +481,109 @@ class AiChatResponse(BaseModel):
     answer: str
     sources: List[AiChatSource]
     searched_pages: int
+
+
+class AiInteractionReviewUpdate(BaseModel):
+    review_status: str
+    review_note: str = Field(default="", max_length=2000)
+
+
+class AiInteractionRead(BaseModel):
+    id: str
+    session_id: str
+    user_id: str
+    user_name: str
+    user_email: str
+    question: str
+    answer: str
+    scope_type: str
+    space_key: Optional[str] = None
+    page_id: Optional[str] = None
+    page_title: Optional[str] = None
+    engine: str
+    model_name: Optional[str] = None
+    searched_pages: int
+    source_count: int
+    sources: List[AiChatSource]
+    duration_ms: int
+    review_status: str
+    review_note: str
+    reviewed_by_name: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+def serialize_ai_interaction(item: AiInteractionModel) -> AiInteractionRead:
+    try:
+        source_payload = json.loads(decrypt_text(item.sources_json) or "[]")
+    except (TypeError, ValueError):
+        source_payload = []
+    return AiInteractionRead(
+        id=item.id,
+        session_id=item.session_id,
+        user_id=item.user_id,
+        user_name=item.user_name,
+        user_email=item.user_email,
+        question=decrypt_text(item.question),
+        answer=decrypt_text(item.answer),
+        scope_type=item.scope_type,
+        space_key=item.space_key,
+        page_id=item.page_id,
+        page_title=item.page_title,
+        engine=item.engine,
+        model_name=item.model_name,
+        searched_pages=item.searched_pages,
+        source_count=item.source_count,
+        sources=[AiChatSource(**source) for source in source_payload],
+        duration_ms=item.duration_ms,
+        review_status=item.review_status,
+        review_note=decrypt_text(item.review_note),
+        reviewed_by_name=item.reviewed_by_name,
+        reviewed_at=item.reviewed_at,
+        created_at=item.created_at,
+    )
+
+
+def save_ai_interaction(
+    db: Session,
+    user: dict,
+    payload: AiChatRequest,
+    response: AiChatResponse,
+    engine_name: str,
+    duration_ms: int,
+) -> None:
+    try:
+        page_title = None
+        if payload.page_id:
+            page = db.query(PageModel).filter(PageModel.id == payload.page_id).first()
+            page_title = page.title if page else None
+        scope_type = "page" if payload.page_id else "space" if payload.space_key else "all"
+        source_payload = [source.model_dump() for source in response.sources]
+        item = AiInteractionModel(
+            session_id=payload.session_id or str(uuid.uuid4()),
+            user_id=user.get("id", "unknown"),
+            user_name=user.get("full_name") or user.get("name") or user.get("email", "Usuario"),
+            user_email=user.get("email", "unknown"),
+            question=encrypt_text(payload.message.strip()),
+            answer=encrypt_text(response.answer),
+            scope_type=scope_type,
+            space_key=(payload.space_key or "").upper() or None,
+            page_id=payload.page_id,
+            page_title=page_title,
+            engine=engine_name,
+            model_name=OLLAMA_CHAT_MODEL if engine_name == "ollama" else None,
+            searched_pages=response.searched_pages,
+            source_count=len(response.sources),
+            sources_json=encrypt_text(json.dumps(source_payload, ensure_ascii=False)),
+            duration_ms=max(duration_ms, 0),
+            review_status="unreviewed",
+            review_note=encrypt_text(""),
+        )
+        db.add(item)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        print("Nota: no se pudo guardar la interaccion de IA:", exc)
 
 
 def serialize_feedback_item(item: FeedbackItemModel) -> FeedbackRead:
@@ -790,6 +949,27 @@ def ai_tokenize(value: str) -> set[str]:
     }
 
 
+def normalized_ai_tokens(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", (value or "").lower())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return {
+        token for token in re.findall(r"[a-z0-9_]{3,}", normalized)
+        if token not in AI_STOPWORDS
+    }
+
+
+def fuzzy_token_hits(query_tokens: set[str], candidate_tokens: set[str]) -> int:
+    hits = 0
+    for candidate in candidate_tokens:
+        if any(
+            candidate == query
+            or SequenceMatcher(None, candidate, query).ratio() >= 0.78
+            for query in query_tokens
+        ):
+            hits += 1
+    return hits
+
+
 def is_ai_greeting(value: str) -> bool:
     normalized = re.sub(r"[^\wáéíóúÁÉÍÓÚñÑ]+", " ", (value or "").lower()).strip()
     return normalized in {
@@ -850,6 +1030,39 @@ def split_ai_chunks(value: str, max_chars: int = 900) -> List[str]:
     return chunks
 
 
+def parse_ai_subtopics(value: str) -> List[tuple[str, str]]:
+    raw_value = (value or "").strip()
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError):
+        parsed = None
+
+    if isinstance(parsed, list):
+        subtopics: List[tuple[str, str]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if title or content:
+                subtopics.append((title, content))
+        return subtopics
+
+    return [(line.strip(), "") for line in raw_value.splitlines() if line.strip()]
+
+
+def build_ai_page_chunks(content: str, subtopics: str) -> List[tuple[str, bool, Optional[str]]]:
+    chunks = [(chunk, chunk.lstrip().startswith("```"), None) for chunk in split_ai_chunks(content)]
+    for title, subtopic_content in parse_ai_subtopics(subtopics):
+        subtopic_chunks = split_ai_chunks(subtopic_content) if subtopic_content else [title]
+        for chunk in subtopic_chunks:
+            label = f"Subtema: {title}" if title else "Subtema"
+            chunks.append((f"{label}\n{chunk}".strip(), chunk.lstrip().startswith("```"), title or None))
+    return chunks
+
+
 def visible_pages_for_ai(db: Session, user: dict, space_key: Optional[str] = None, page_id: Optional[str] = None) -> List[PageModel]:
     query = db.query(PageModel)
     if page_id:
@@ -865,6 +1078,16 @@ def visible_pages_for_ai(db: Session, user: dict, space_key: Optional[str] = Non
         except HTTPException:
             continue
     return visible_pages
+
+
+def visible_spaces_for_ai(db: Session, user: dict, space_key: Optional[str] = None) -> List[SpaceModel]:
+    query = db.query(SpaceModel)
+    if space_key:
+        query = query.filter(SpaceModel.key == space_key.upper())
+    return [
+        space for space in query.order_by(SpaceModel.name.asc()).all()
+        if not space.is_restricted or is_workspace_member(space, user)
+    ]
 
 
 def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
@@ -924,13 +1147,20 @@ def build_ollama_context(matches: List[AiChatSource]) -> str:
                 f"[Fuente {index}]",
                 f"Pagina: {source.page_title}",
                 f"Workspace: {source.space_key}",
+                f"Tipo de fuente: {source.source_type}",
+                f"Subtema: {source.subtopic_title or 'Tema principal'}",
                 f"Fragmento: {source.excerpt}",
             ])
         )
     return "\n\n".join(context_blocks)
 
 
-def ask_ollama(question: str, matches: List[AiChatSource], request: Optional[Request] = None) -> Optional[str]:
+def ask_ollama(
+    question: str,
+    matches: List[AiChatSource],
+    request: Optional[Request] = None,
+    history: Optional[List[AiChatHistoryTurn]] = None,
+) -> Optional[str]:
     if not matches:
         return None
 
@@ -944,7 +1174,13 @@ def ask_ollama(question: str, matches: List[AiChatSource], request: Optional[Req
         "Cuando el usuario solicite codigo y el contexto incluya un ejemplo, conserva el codigo y presentalo en un bloque Markdown con el lenguaje indicado, por ejemplo ```python. "
         "Responde en maximo 5 bullets o 1 parrafo corto. Cita las paginas usadas al final cuando uses fuentes."
     )
+    recent_history = "\n".join(
+        f"Usuario: {turn.question}\nAsistente: {turn.answer[:1200]}"
+        for turn in (history or [])[-4:]
+    ) or "Sin turnos anteriores"
     user_prompt = (
+        "Conversacion reciente:\n"
+        f"{recent_history}\n\n"
         "Pregunta del usuario:\n"
         f"{question}\n\n"
         "Contexto disponible de GateWiki:\n"
@@ -1272,17 +1508,20 @@ def request_space_storage(
 @app.post("/api/ai-chat", response_model=AiChatResponse)
 def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     check_permission(user, "gatewiki:view")
+    started_at = time.perf_counter()
 
     question = payload.message.strip()
     if is_ai_greeting(question):
-        return AiChatResponse(
+        response = AiChatResponse(
             answer="Hola, soy el asistente de GateWiki. En que te puedo ayudar? Puedes preguntarme sobre temas, procesos, codigo o configuraciones documentadas en los wikis.",
             sources=[],
             searched_pages=0,
         )
+        save_ai_interaction(db, user, payload, response, "system", round((time.perf_counter() - started_at) * 1000))
+        return response
 
     if is_ai_creator_question(question):
-        return AiChatResponse(
+        response = AiChatResponse(
             answer=(
                 "La plataforma fue realizada por el **equipo de Redeployment**, liderado por **Martin P.**, "
                 "junto a sus programadores **Cesar C.** y **Jonathan C.**"
@@ -1290,32 +1529,100 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
             sources=[],
             searched_pages=0,
         )
+        save_ai_interaction(db, user, payload, response, "system", round((time.perf_counter() - started_at) * 1000))
+        return response
 
     question_tokens = ai_tokenize(question)
     if not question_tokens:
         raise HTTPException(status_code=400, detail="Escribe una pregunta mas especifica.")
     asks_for_code = bool(re.search(r"\b(codigo|código|code|ejemplo)\b", question.lower()))
+    retrieval_tokens = set(question_tokens)
+    normalized_retrieval_tokens = normalized_ai_tokens(question)
+    is_follow_up = bool(re.search(r"\b(ese|esa|eso|anterior|mismo|misma|subtema|tema|pero|info|informacion|información|dices|seguro|entonces|mmm)\b", question.lower()))
+    if is_follow_up and payload.history:
+        retrieval_tokens |= ai_tokenize(payload.history[-1].question)
+        normalized_retrieval_tokens |= normalized_ai_tokens(payload.history[-1].question)
+
+    spaces = visible_spaces_for_ai(db, user, payload.space_key)
+    normalized_question_tokens = normalized_retrieval_tokens
+    asks_about_workspaces = bool(re.search(r"\b(workspace|workspaces|espacio|espacios)\b", question.lower()))
+    space_candidates: List[tuple[float, SpaceModel]] = []
+    for space in spaces:
+        name_tokens = normalized_ai_tokens(f"{space.name} {space.key}")
+        hits = fuzzy_token_hits(normalized_question_tokens, name_tokens)
+        if not hits:
+            continue
+        coverage = hits / max(len(name_tokens), 1)
+        normalized_name = " ".join(normalized_ai_tokens(space.name))
+        normalized_question = " ".join(normalized_question_tokens)
+        phrase_match = bool(normalized_name) and normalized_name in normalized_question
+        space_candidates.append(((coverage * 12.0) + (hits * 2.0) + (5.0 if phrase_match else 0.0), space))
+
+    best_space_score = max((score for score, _ in space_candidates), default=0.0)
+    targeted_space_keys = {
+        space.key for score, space in space_candidates
+        if best_space_score >= 7.0 and score >= best_space_score * 0.8
+    }
 
     pages = visible_pages_for_ai(db, user, payload.space_key, payload.page_id)
+    if targeted_space_keys and not payload.page_id:
+        pages = [page for page in pages if page.space_key in targeted_space_keys]
     ranked_sources: List[AiChatSource] = []
+    subtopic_candidates: List[tuple[float, str, str]] = []
+
+    workspace_sources = [space for space in spaces if space.key in targeted_space_keys]
+    if asks_about_workspaces and not workspace_sources and not space_candidates:
+        workspace_sources = spaces
+    for space in workspace_sources:
+        ranked_sources.append(AiChatSource(
+            page_id=None,
+            page_title=space.name,
+            space_key=space.key,
+            source_type="workspace",
+            excerpt=f"Workspace: {space.name}\nDescripcion: {space.description or 'Sin descripcion disponible.'}",
+            score=50.0 if space.key in targeted_space_keys else 8.0,
+        ))
+
+    for page in pages:
+        for title, _ in parse_ai_subtopics(decrypt_text(page.subtopics)):
+            title_tokens = ai_tokenize(title)
+            if not title_tokens:
+                continue
+            overlap_count = len(retrieval_tokens & title_tokens)
+            coverage = overlap_count / len(title_tokens)
+            phrase_match = clean_markdown_text(title).lower() in clean_markdown_text(question).lower()
+            confidence = (coverage * 10.0) + (overlap_count * 2.0) + (5.0 if phrase_match else 0.0)
+            if overlap_count:
+                subtopic_candidates.append((confidence, page.id, title))
+
+    best_subtopic_score = max((candidate[0] for candidate in subtopic_candidates), default=0.0)
+    targeted_subtopics = {
+        (page_id, title) for score, page_id, title in subtopic_candidates
+        if best_subtopic_score >= 7.0 and score >= best_subtopic_score * 0.8
+    }
 
     for page in pages:
         content = decrypt_text(page.content)
         subtopics = decrypt_text(page.subtopics)
-        page_context = f"{page.title} {page.space_key} {subtopics}"
+        page_space = next((space for space in spaces if space.key == page.space_key), None)
+        page_context = f"{page.title} {page.space_key} {page_space.name if page_space else ''} {page_space.description if page_space else ''}"
         page_tokens = ai_tokenize(page_context)
-        for chunk in split_ai_chunks(content):
+        for chunk, is_code_chunk, subtopic_title in build_ai_page_chunks(content, subtopics):
             chunk_tokens = ai_tokenize(chunk)
             if not chunk_tokens:
                 continue
-            overlap = question_tokens & (chunk_tokens | page_tokens)
+            overlap = retrieval_tokens & (chunk_tokens | page_tokens)
             if not overlap:
                 continue
-            title_hits = len(question_tokens & page_tokens)
-            density = len(overlap) / max(len(question_tokens), 1)
-            code_boost = 6.0 if asks_for_code and chunk.lstrip().startswith("```") else 0.0
-            score = round((len(overlap) * 2.0) + (title_hits * 1.2) + density + code_boost, 3)
-            excerpt_limit = 1200 if chunk.lstrip().startswith("```") else 520
+            title_hits = len(retrieval_tokens & page_tokens)
+            density = len(overlap) / max(len(retrieval_tokens), 1)
+            subtopic_tokens = ai_tokenize(subtopic_title or "")
+            targeted_subtopic = bool(subtopic_title) and (page.id, subtopic_title) in targeted_subtopics
+            subtopic_hits = len(retrieval_tokens & subtopic_tokens)
+            subtopic_boost = 14.0 if targeted_subtopic else subtopic_hits * 3.0
+            code_boost = 6.0 if asks_for_code and is_code_chunk else 0.0
+            score = round((len(overlap) * 2.0) + (title_hits * 1.2) + density + subtopic_boost + code_boost, 3)
+            excerpt_limit = 1200 if is_code_chunk else 520
             excerpt = chunk[:excerpt_limit].strip()
             if len(chunk) > excerpt_limit:
                 excerpt += "..."
@@ -1324,34 +1631,90 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
                     page_id=page.id,
                     page_title=page.title,
                     space_key=page.space_key,
+                    source_type="page",
+                    subtopic_title=subtopic_title,
                     excerpt=excerpt,
                     score=score,
                 )
             )
 
+    if targeted_subtopics:
+        ranked_sources = [
+            source for source in ranked_sources
+            if source.subtopic_title and (source.page_id, source.subtopic_title) in targeted_subtopics
+        ]
     ranked_sources.sort(key=lambda source: source.score, reverse=True)
     selected_sources: List[AiChatSource] = []
     seen_pages: set[str] = set()
     top_score = ranked_sources[0].score if ranked_sources else 0
     min_relevance = max(2.8, top_score * 0.55) if top_score else 0
     for source in ranked_sources:
-        if source.page_id in seen_pages:
+        source_key = f"{source.source_type}:{source.page_id or source.space_key}:{source.subtopic_title or source.page_title}"
+        if source_key in seen_pages:
             continue
         if source.score < min_relevance:
             if selected_sources or top_score < 2.0:
                 continue
         selected_sources.append(source)
-        seen_pages.add(source.page_id)
+        seen_pages.add(source_key)
         if len(selected_sources) >= payload.max_sources:
             break
 
-    ollama_answer = ask_ollama(question, selected_sources, request)
+    ollama_answer = ask_ollama(question, selected_sources, request, payload.history)
 
-    return AiChatResponse(
+    response = AiChatResponse(
         answer=ollama_answer or build_ai_answer(question, selected_sources),
         sources=selected_sources,
         searched_pages=len(pages),
     )
+    save_ai_interaction(
+        db,
+        user,
+        payload,
+        response,
+        "ollama" if ollama_answer else "retrieval",
+        round((time.perf_counter() - started_at) * 1000),
+    )
+    return response
+
+
+@app.get("/api/ai-interactions/admin", response_model=List[AiInteractionRead])
+def get_admin_ai_interactions(
+    review_status: Optional[str] = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    check_permission(user, "gatewiki:admin")
+    safe_limit = max(1, min(limit, 500))
+    query = db.query(AiInteractionModel)
+    if review_status in {"unreviewed", "expected", "unexpected"}:
+        query = query.filter(AiInteractionModel.review_status == review_status)
+    items = query.order_by(AiInteractionModel.created_at.desc()).limit(safe_limit).all()
+    return [serialize_ai_interaction(item) for item in items]
+
+
+@app.patch("/api/ai-interactions/{interaction_id}/review", response_model=AiInteractionRead)
+def review_ai_interaction(
+    interaction_id: str,
+    payload: AiInteractionReviewUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    check_permission(user, "gatewiki:admin")
+    if payload.review_status not in {"unreviewed", "expected", "unexpected"}:
+        raise HTTPException(status_code=400, detail="Estado de revision invalido.")
+    item = db.query(AiInteractionModel).filter(AiInteractionModel.id == interaction_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Registro de IA no encontrado.")
+    item.review_status = payload.review_status
+    item.review_note = encrypt_text(payload.review_note.strip())
+    item.reviewed_by_user_id = user.get("id") if payload.review_status != "unreviewed" else None
+    item.reviewed_by_name = (user.get("full_name") or user.get("name")) if payload.review_status != "unreviewed" else None
+    item.reviewed_at = datetime.utcnow() if payload.review_status != "unreviewed" else None
+    db.commit()
+    db.refresh(item)
+    return serialize_ai_interaction(item)
 
 
 @app.get("/api/pages", response_model=List[PageRead])

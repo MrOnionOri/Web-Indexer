@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import admin, apps, auth, feedback, portal, projects
+from app.api.routes import admin, apps, auth, feedback, portal, projects, support_chat
 from app.core.config import get_settings
 from app.core.crypto import ENCRYPTION_PREFIX, encrypt_text
 from app.core.security import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
@@ -64,13 +64,15 @@ app.include_router(apps.router)
 app.include_router(feedback.router)
 app.include_router(portal.router)
 app.include_router(projects.router)
+app.include_router(support_chat.router)
 
 
 def run_auto_migrations(engine) -> None:
     from sqlalchemy import inspect, text
-    from app.models import User, UserBadge
+    from app.models import ChatConversation, User, UserBadge
     users_table = User.__tablename__
     badges_table = UserBadge.__tablename__
+    chats_table = ChatConversation.__tablename__
     safe_table_names = {table.name for table in Base.metadata.sorted_tables}
     if users_table not in safe_table_names:
         raise RuntimeError(f"Refusing to migrate unexpected table: {users_table}")
@@ -104,6 +106,21 @@ def run_auto_migrations(engine) -> None:
                 print(f"Auto-migration: Adding missing column 'logo_url' to table '{badges_table}'...")
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE {badges_table} ADD COLUMN logo_url VARCHAR(500) NULL"))
+        if chats_table in inspector.get_table_names():
+            chat_columns = {col["name"] for col in inspector.get_columns(chats_table)}
+            chat_migrations = {
+                "requester_user_id": "VARCHAR(36) NULL",
+                "source_app": "VARCHAR(80) NOT NULL DEFAULT 'gatestack'",
+                "status": "VARCHAR(20) NOT NULL DEFAULT 'open'",
+                "claimed_by_user_id": "VARCHAR(36) NULL",
+                "claimed_at": "DATETIME NULL",
+                "closed_at": "DATETIME NULL",
+            }
+            for column_name, column_type in chat_migrations.items():
+                if column_name not in chat_columns:
+                    print(f"Auto-migration: Adding missing column '{column_name}' to table '{chats_table}'...")
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE {chats_table} ADD COLUMN {column_name} {column_type}"))
     except Exception as e:
         print(f"Auto-migration error: {e}")
 

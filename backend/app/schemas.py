@@ -256,6 +256,44 @@ class FeedbackInternalNoteCreateRequest(BaseModel):
     note: str = Field(min_length=1, max_length=4000)
 
 
+class ChatUserRead(BaseModel):
+    id: str
+    full_name: str
+    email: str
+
+
+class SupportConversationCreateRequest(BaseModel):
+    source_app: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9-]+$")
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ChatMessageCreateRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class ChatMessageRead(BaseModel):
+    id: str
+    conversation_id: str
+    sender_user_id: str
+    sender_name: str
+    body: str
+    created_at: datetime
+
+
+class SupportConversationRead(BaseModel):
+    id: str
+    source_app: str
+    status: str
+    requester: ChatUserRead
+    claimed_by: ChatUserRead | None
+    last_message: str
+    last_message_at: datetime | None
+    unread_count: int
+    created_at: datetime
+    claimed_at: datetime | None
+    closed_at: datetime | None
+
+
 class ProjectRead(BaseModel):
     id: str
     original_filename: str

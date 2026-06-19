@@ -235,6 +235,39 @@ class FeedbackInternalNote(Base, TimestampMixin):
     note: Mapped[str] = mapped_column(Text)
 
 
+class ChatConversation(Base, TimestampMixin):
+    __tablename__ = table_name("chat_conversations")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    direct_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    requester_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True, index=True)
+    source_app: Mapped[str] = mapped_column(String(80), default="gatestack", index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    claimed_by_user_id: Mapped[str | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ChatParticipant(Base, TimestampMixin):
+    __tablename__ = table_name("chat_participants")
+    __table_args__ = (UniqueConstraint("conversation_id", "user_id", name="uq_chat_participant"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('chat_conversations')}.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ChatMessage(Base):
+    __tablename__ = table_name("chat_messages")
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('chat_conversations')}.id"), index=True)
+    sender_user_id: Mapped[str] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ProjectUpload(Base, TimestampMixin):
     __tablename__ = table_name("project_uploads")
 

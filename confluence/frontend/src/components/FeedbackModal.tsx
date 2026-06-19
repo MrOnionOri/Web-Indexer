@@ -1,6 +1,6 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquarePlus, Send, X } from "lucide-react";
-import { api, FeedbackItem, Page } from "../api";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { MessageSquarePlus, X } from "lucide-react";
+import { api, FeedbackItem, GATESTACK_CHAT_EMBED_URL, Page } from "../api";
 
 interface FeedbackModalProps {
   token: string | null;
@@ -13,22 +13,12 @@ export default function FeedbackModal({ token, activePage, open, onClose }: Feed
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
-  const [chatMessage, setChatMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
   const [notice, setNotice] = useState("");
-  const [reopenChat, setReopenChat] = useState(false);
-  const chatRef = useRef<HTMLDivElement | null>(null);
-  const chatItems = useMemo(
-    () => items.filter((item) => item.title === "Chat con admin").slice().reverse(),
-    [items]
-  );
   const formalItems = useMemo(
     () => items.filter((item) => item.title !== "Chat con admin"),
     [items]
   );
-  const latestChat = chatItems[chatItems.length - 1];
-  const chatClosed = latestChat?.status === "closed" && !reopenChat;
 
   useEffect(() => {
     if (!open) return;
@@ -37,16 +27,6 @@ export default function FeedbackModal({ token, activePage, open, onClose }: Feed
     setMessage("");
     setNotice("");
   }, [open, activePage?.id, token]);
-
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setInterval(() => api.myFeedback(token).then(setItems).catch(() => {}), 5000);
-    return () => window.clearInterval(timer);
-  }, [open, token]);
-
-  useEffect(() => {
-    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatItems.length]);
 
   if (!open) return null;
 
@@ -72,30 +52,6 @@ export default function FeedbackModal({ token, activePage, open, onClose }: Feed
     }
   }
 
-  async function handleChatSubmit(event: FormEvent) {
-    event.preventDefault();
-    const body = chatMessage.trim();
-    if (!body) return;
-    setChatLoading(true);
-    setNotice("");
-    try {
-      const created = await api.createFeedback(token, {
-        title: "Chat con admin",
-        message: body.length < 5 ? body.padEnd(5, " ") : body,
-        page_id: activePage?.id ?? null,
-        page_title: activePage?.title ?? null,
-        space_key: activePage?.space_key ?? null,
-      });
-      setItems((current) => [created, ...current]);
-      setChatMessage("");
-      setReopenChat(false);
-    } catch (err: any) {
-      setNotice(err.message ?? "No se pudo enviar el mensaje.");
-    } finally {
-      setChatLoading(false);
-    }
-  }
-
   return (
     <div className="modal-overlay">
       <div className="modal-card feedback-modal">
@@ -105,42 +61,12 @@ export default function FeedbackModal({ token, activePage, open, onClose }: Feed
             <X size={16} />
           </button>
         </div>
-        <section className="gatewiki-feedback-chat">
+        <section className="gatewiki-feedback-chat team-chat-embed-section">
           <div className="modal-subheader">
-            <h3>Chat con admin</h3>
-            <span>Actualiza en vivo</span>
+            <h3>Ayuda con un administrador</h3>
+            <span>Soporte breve en vivo</span>
           </div>
-          <div className="gatewiki-chat-thread" ref={chatRef}>
-            {chatItems.length === 0 && <p className="text-muted">Aun no hay mensajes de chat.</p>}
-            {chatItems.map((item) => (
-              <React.Fragment key={item.id}>
-                <div className="wiki-chat-bubble mine">
-                  <p>{item.message}</p>
-                  <span>{new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - {item.status}</span>
-                </div>
-                {item.public_response && (
-                  <div className="wiki-chat-bubble admin">
-                    <strong>{item.responded_by_name || "Admin"}</strong>
-                    <p>{item.public_response}</p>
-                    {item.responded_at && <span>{new Date(item.responded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
-                  </div>
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-          <form className="wiki-chat-composer" onSubmit={handleChatSubmit}>
-            {chatClosed ? (
-              <>
-                <input value="Este chat fue cerrado por admin." readOnly />
-                <button type="button" className="btn-primary" onClick={() => setReopenChat(true)}>Abrir nuevo chat</button>
-              </>
-            ) : (
-              <>
-                <input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Escribe un mensaje para admin..." />
-                <button className="btn-primary" disabled={chatLoading || !chatMessage.trim()}><Send size={16} /></button>
-              </>
-            )}
-          </form>
+          <iframe className="team-chat-embed" src={GATESTACK_CHAT_EMBED_URL} title="Ayuda con un administrador" />
         </section>
 
         <form onSubmit={handleSubmit} className="feedback-submit-form">
