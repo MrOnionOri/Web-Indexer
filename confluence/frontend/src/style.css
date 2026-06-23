@@ -3262,6 +3262,34 @@ body.light-theme .ai-chat-source {
     gap: 4px;
 }
 
+.admin-ai-source-summary .admin-ai-confidence {
+    padding: 4px 7px;
+    border-radius: 6px;
+    border: 1px solid rgba(139, 147, 167, 0.22);
+    background: rgba(139, 147, 167, 0.12);
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.admin-ai-source-summary .admin-ai-confidence.high {
+    border-color: rgba(35, 163, 109, 0.25);
+    background: rgba(35, 163, 109, 0.14);
+    color: #248f64;
+}
+
+.admin-ai-source-summary .admin-ai-confidence.medium {
+    border-color: rgba(233, 162, 46, 0.28);
+    background: rgba(233, 162, 46, 0.15);
+    color: #a86b11;
+}
+
+.admin-ai-source-summary .admin-ai-confidence.low,
+.admin-ai-source-summary .admin-ai-confidence.none {
+    border-color: rgba(217, 74, 87, 0.24);
+    background: rgba(217, 74, 87, 0.13);
+    color: #b9414d;
+}
+
 .admin-ai-review-badge {
     padding: 5px 8px;
     border-radius: 6px;

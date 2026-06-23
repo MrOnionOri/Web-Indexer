@@ -306,6 +306,9 @@ export default function AdminPanel({
                     <div className="admin-ai-source-summary">
                       <span>{item.searched_pages} paginas revisadas</span>
                       <span>{item.source_count} fuentes usadas</span>
+                      <span className={`admin-ai-confidence ${item.confidence_level}`} title={item.confidence_notice}>
+                        {item.confidence_level === "high" ? "Respaldo alto" : item.confidence_level === "medium" ? "Respaldo medio" : item.confidence_level === "low" ? "Respaldo bajo" : "Sin respaldo"}
+                      </span>
                       {item.sources.map((source) => <span key={`${item.id}-${source.page_id}`}>{source.page_title} · {source.score}</span>)}
                     </div>
                     <textarea

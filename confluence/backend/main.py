@@ -505,6 +505,8 @@ class AiInteractionRead(BaseModel):
     searched_pages: int
     source_count: int
     sources: List[AiChatSource]
+    confidence_level: str
+    confidence_notice: str
     duration_ms: int
     review_status: str
     review_note: str
@@ -518,6 +520,7 @@ def serialize_ai_interaction(item: AiInteractionModel) -> AiInteractionRead:
         source_payload = json.loads(decrypt_text(item.sources_json) or "[]")
     except (TypeError, ValueError):
         source_payload = []
+    sources = [AiChatSource(**source) for source in source_payload]
     return AiInteractionRead(
         id=item.id,
         session_id=item.session_id,
@@ -534,7 +537,9 @@ def serialize_ai_interaction(item: AiInteractionModel) -> AiInteractionRead:
         model_name=item.model_name,
         searched_pages=item.searched_pages,
         source_count=item.source_count,
-        sources=[AiChatSource(**source) for source in source_payload],
+        sources=sources,
+        confidence_level=ai_confidence_level(sources),
+        confidence_notice=ai_confidence_notice(sources),
         duration_ms=item.duration_ms,
         review_status=item.review_status,
         review_note=decrypt_text(item.review_note),
@@ -1090,6 +1095,39 @@ def visible_spaces_for_ai(db: Session, user: dict, space_key: Optional[str] = No
     ]
 
 
+def ai_confidence_level(matches: List[AiChatSource]) -> str:
+    if not matches:
+        return "none"
+    top_score = max((source.score for source in matches), default=0.0)
+    if any(source.source_type == "workspace" and source.score >= 40 for source in matches):
+        return "high"
+    if top_score >= 10 or (top_score >= 7 and len(matches) >= 2):
+        return "high"
+    if top_score >= 4:
+        return "medium"
+    return "low"
+
+
+def ai_confidence_notice(matches: List[AiChatSource]) -> str:
+    level = ai_confidence_level(matches)
+    if level == "high":
+        return "Respaldo alto: la respuesta sale de fuentes directas del wiki."
+    if level == "medium":
+        return "Respaldo medio: encontre fuentes relacionadas, pero conviene confirmar el detalle en la pagina."
+    if level == "low":
+        return "Respaldo bajo: esto parece relacionado, pero no lo confirmo al 100% con el contexto disponible."
+    return "Sin respaldo suficiente en los wikis disponibles."
+
+
+def format_ai_source_reference(source: AiChatSource, index: int) -> str:
+    label = source.page_title
+    if source.subtopic_title:
+        label = f"{label} > {source.subtopic_title}"
+    if source.source_type == "workspace":
+        label = f"Workspace {label}"
+    return f"[Fuente {index}: {label}, {source.space_key}]"
+
+
 def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
     if not matches:
         return (
@@ -1099,25 +1137,25 @@ def build_ai_answer(question: str, matches: List[AiChatSource]) -> str:
 
     asks_for_code = bool(re.search(r"\b(codigo|código|code|ejemplo)\b", question.lower()))
     if asks_for_code:
-        for source in matches:
+        for index, source in enumerate(matches, start=1):
             code_match = re.search(r"```([a-zA-Z0-9_+-]*)\s*\n(.*?)```", source.excerpt, flags=re.S)
             if code_match:
                 language = code_match.group(1) or "text"
                 code = code_match.group(2).strip()
                 return (
-                    f"Encontré este ejemplo en **{source.page_title}**:\n\n"
+                    f"Encontre este ejemplo en **{source.page_title}** {format_ai_source_reference(source, index)}:\n\n"
                     f"```{language}\n{code}\n```\n\n"
                     "Revisa la fuente para confirmar el contexto y los valores que debes adaptar."
                 )
 
     lines = ["Segun los wikis disponibles:"]
-    for source in matches[:3]:
+    for index, source in enumerate(matches[:3], start=1):
         excerpt = source.excerpt
         sentences = re.split(r"(?<=[.!?])\s+", excerpt)
         sentence = next((part.strip() for part in sentences if len(part.strip()) > 45), excerpt[:220].strip())
         if len(sentence) > 260:
             sentence = sentence[:257].rstrip() + "..."
-        lines.append(f"- {sentence} ({source.page_title}, {source.space_key})")
+        lines.append(f"- {sentence} {format_ai_source_reference(source, index)}")
     lines.append("Revisa las fuentes para confirmar detalles antes de tomar una decision importante.")
     return "\n".join(lines)
 
@@ -1170,6 +1208,9 @@ def ask_ollama(
         "Para preguntas sobre conocimiento, responde usando solo el contexto proporcionado. "
         "Puedes hacer inferencias directas y obvias desde el contexto, por ejemplo identificar el lenguaje de un bloque de codigo si el contexto lo muestra. "
         "Si el contexto no contiene la respuesta, di que no encontraste ese dato en los wikis disponibles y sugiere preguntar con otro termino o revisar otra pagina. "
+        "GateWiki te indicara un nivel interno de respaldo; usalo solo para calibrar que tan directo o cauteloso debes responder, pero no lo muestres literalmente al usuario. "
+        "Si el respaldo interno es bajo, explica de forma natural que encontraste algo relacionado pero que conviene confirmar en la fuente. "
+        "Menciona las fuentes usadas con el formato [Fuente N] junto a la afirmacion principal. "
         "No inventes datos externos ni agregues informacion que no este respaldada por las fuentes. "
         "Cuando el usuario solicite codigo y el contexto incluya un ejemplo, conserva el codigo y presentalo en un bloque Markdown con el lenguaje indicado, por ejemplo ```python. "
         "Responde en maximo 5 bullets o 1 parrafo corto. Cita las paginas usadas al final cuando uses fuentes."
@@ -1183,6 +1224,8 @@ def ask_ollama(
         f"{recent_history}\n\n"
         "Pregunta del usuario:\n"
         f"{question}\n\n"
+        "Nivel interno de respaldo calculado por GateWiki, no lo muestres literalmente al usuario:\n"
+        f"{ai_confidence_notice(matches)}\n\n"
         "Contexto disponible de GateWiki:\n"
         f"{build_ollama_context(matches)}"
     )

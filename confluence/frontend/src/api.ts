@@ -183,6 +183,8 @@ export interface AiInteraction {
   searched_pages: number;
   source_count: number;
   sources: AiChatSource[];
+  confidence_level: "none" | "low" | "medium" | "high" | string;
+  confidence_notice: string;
   duration_ms: number;
   review_status: AiReviewStatus;
   review_note: string;
