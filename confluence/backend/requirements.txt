@@ -8,3 +8,5 @@ python-jose[cryptography]==3.3.0
 pydantic==2.10.3
 python-multipart==0.0.20
 python-dotenv==1.0.1
+pillow==11.1.0
+pytesseract==0.3.13

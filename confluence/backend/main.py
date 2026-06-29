@@ -3,6 +3,8 @@ import uuid
 import base64
 import hashlib
 import json
+import math
+import io
 import re
 import time
 import unicodedata
@@ -12,10 +14,12 @@ from pathlib import Path
 from typing import List, Optional
 import requests
 from dotenv import load_dotenv
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from PIL import Image
+import pytesseract
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response, Security, status
+from fastapi import FastAPI, Depends, File, HTTPException, Request, Response, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -100,6 +104,7 @@ OLLAMA_FALLBACK_URLS = [
     if url.strip()
 ]
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "gatewiki-assistant")
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
@@ -213,6 +218,23 @@ class AiInteractionModel(Base):
     reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
+
+class AiEmbeddingModel(Base):
+    __tablename__ = "gatewiki_ai_embeddings"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    page_id = Column(String(36), nullable=False, index=True)
+    space_key = Column(String(20), nullable=False, index=True)
+    page_title = Column(String(180), nullable=False)
+    source_type = Column(String(40), nullable=False, default="page")
+    subtopic_title = Column(String(180), nullable=True, index=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+    chunk_hash = Column(String(64), nullable=False, unique=True, index=True)
+    is_code = Column(Boolean, nullable=False, default=False)
+    chunk_text = Column(LONGTEXT, nullable=False)
+    embedding_json = Column(LONGTEXT, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 def init_db_for_local_dev() -> None:
     Base.metadata.create_all(bind=engine)
 
@@ -261,6 +283,15 @@ def init_db_for_local_dev() -> None:
                 conn.execute(text("UPDATE gatewiki_ai_interactions SET session_id = id WHERE session_id IS NULL"))
                 conn.execute(text("ALTER TABLE gatewiki_ai_interactions MODIFY COLUMN session_id VARCHAR(36) NOT NULL"))
                 conn.execute(text("CREATE INDEX ix_gatewiki_ai_interactions_session_id ON gatewiki_ai_interactions (session_id)"))
+
+            embed_result = conn.execute(text("SHOW COLUMNS FROM gatewiki_ai_embeddings"))
+            existing_embed_cols = {row[0] for row in embed_result.fetchall()}
+            if "source_type" not in existing_embed_cols:
+                conn.execute(text("ALTER TABLE gatewiki_ai_embeddings ADD COLUMN source_type VARCHAR(40) NOT NULL DEFAULT 'page'"))
+            if "subtopic_title" not in existing_embed_cols:
+                conn.execute(text("ALTER TABLE gatewiki_ai_embeddings ADD COLUMN subtopic_title VARCHAR(180) NULL"))
+            if "is_code" not in existing_embed_cols:
+                conn.execute(text("ALTER TABLE gatewiki_ai_embeddings ADD COLUMN is_code BOOLEAN NOT NULL DEFAULT FALSE"))
                 
             conn.commit()
     except Exception as e:
@@ -453,6 +484,15 @@ class StorageRequestCreate(BaseModel):
     reason: str = ""
 
 
+class MarkdownImageUploadRead(BaseModel):
+    url: str
+    file_id: str
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: int
+    ocr_text: str = ""
+
+
 class AiChatHistoryTurn(BaseModel):
     question: str = Field(..., min_length=1, max_length=1200)
     answer: str = Field(default="", max_length=5000)
@@ -576,7 +616,7 @@ def save_ai_interaction(
             page_id=payload.page_id,
             page_title=page_title,
             engine=engine_name,
-            model_name=OLLAMA_CHAT_MODEL if engine_name == "ollama" else None,
+            model_name=OLLAMA_CHAT_MODEL if "ollama" in engine_name else None,
             searched_pages=response.searched_pages,
             source_count=len(response.sources),
             sources_json=encrypt_text(json.dumps(source_payload, ensure_ascii=False)),
@@ -625,10 +665,9 @@ def gatestack_session_headers(request: Request, credentials: Optional[HTTPAuthor
     if credentials:
         headers["Authorization"] = f"Bearer {credentials.credentials}"
     elif request.cookies.get("gatestack_access"):
-        headers["Cookie"] = f"gatestack_access={request.cookies['gatestack_access']}"
+        headers["Authorization"] = f"Bearer {request.cookies['gatestack_access']}"
         csrf = request.cookies.get("gatestack_csrf")
         if csrf:
-            headers["Cookie"] += f"; gatestack_csrf={csrf}"
             headers["X-CSRF-Token"] = csrf
     return headers
 
@@ -750,10 +789,9 @@ def forward_gatestorage_request(method: str, path: str, request: Request, **kwar
     if auth_header:
         headers["Authorization"] = auth_header
     elif request.cookies.get("gatestack_access"):
-        headers["Cookie"] = f"gatestack_access={request.cookies['gatestack_access']}"
+        headers["Authorization"] = f"Bearer {request.cookies['gatestack_access']}"
         csrf = request.cookies.get("gatestack_csrf")
         if csrf:
-            headers["Cookie"] += f"; gatestack_csrf={csrf}"
             headers["X-CSRF-Token"] = csrf
 
     for base_url in get_gatestorage_urls(request):
@@ -773,6 +811,79 @@ def forward_gatestorage_request(method: str, path: str, request: Request, **kwar
             last_error = str(exc)
             continue
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
+
+
+def gatestorage_auth_headers(request: Request) -> dict:
+    headers: dict[str, str] = {}
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        headers["Authorization"] = auth_header
+    elif request.cookies.get("gatestack_access"):
+        headers["Authorization"] = f"Bearer {request.cookies['gatestack_access']}"
+        csrf = request.cookies.get("gatestack_csrf")
+        if csrf:
+            headers["X-CSRF-Token"] = csrf
+    return headers
+
+
+def upload_gatestorage_file_bytes(
+    path: str,
+    request: Request,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    folder: str,
+) -> dict:
+    last_error = "GateStorage no esta disponible."
+    headers = gatestorage_auth_headers(request)
+    for base_url in get_gatestorage_urls(request):
+        try:
+            response = requests.post(
+                f"{base_url}{path}",
+                headers=headers,
+                data={"folder": folder},
+                files={"file": (filename or "imagen", io.BytesIO(data), content_type or "application/octet-stream")},
+                timeout=60.0,
+            )
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {"detail": response.text or "Respuesta invalida de GateStorage."}
+            if response.status_code >= 400:
+                detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+                raise HTTPException(status_code=response.status_code, detail=detail)
+            return payload
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=last_error)
+
+
+def extract_ocr_text(image_bytes: bytes, content_type: str) -> str:
+    if not image_bytes or not (content_type or "").lower().startswith("image/"):
+        return ""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            text_value = pytesseract.image_to_string(image, lang="spa+eng", config="--psm 6")
+    except Exception as exc:
+        print("Nota: OCR de imagen omitido:", exc)
+        return ""
+    text_value = re.sub(r"\s+", " ", text_value or "").strip()
+    return text_value[:4000]
+
+
+def external_gatestorage_url(public_url: str, request: Request) -> str:
+    host = request.url.hostname
+    if not host:
+        return public_url
+    parsed = urlsplit(public_url)
+    if not parsed.scheme or not parsed.netloc:
+        return public_url
+    return urlunsplit((request.url.scheme, f"{host}:8002", parsed.path, parsed.query, parsed.fragment))
 
 
 def sync_gatestorage_workspace_members(space: SpaceModel, request: Request) -> None:
@@ -996,6 +1107,33 @@ def is_ai_creator_question(value: str) -> bool:
     return asks_who and any(term in normalized.split() for term in creator_verbs) and any(term in normalized for term in project_terms)
 
 
+def build_contextual_ai_query(question: str, history: List[AiChatHistoryTurn]) -> str:
+    if not history:
+        return question
+
+    normalized = clean_markdown_text(question).lower()
+    tokens = ai_tokenize(normalized)
+    follow_up_markers = re.search(
+        r"\b(ese|esa|eso|anterior|mismo|misma|subtema|tema|pero|info|informacion|información|dices|seguro|entonces|mmm|"
+        r"codigo|código|code|ejemplo|pasame|pásame|dame|muestrame|muéstrame|explicame|explícame|detallame|detállame|"
+        r"donde|dónde|como|cómo|cual|cuál|para que|para qué|y eso)\b",
+        normalized,
+    )
+    generic_code_request = bool(re.search(r"\b(codigo|código|code|ejemplo|snippet)\b", normalized)) and len(tokens) <= 5
+    short_follow_up = len(tokens) <= 4
+    if not (follow_up_markers or generic_code_request or short_follow_up):
+        return question
+
+    recent_questions = [
+        turn.question.strip()
+        for turn in history[-3:]
+        if turn.question and turn.question.strip()
+    ]
+    if not recent_questions:
+        return question
+    return "\n".join([*recent_questions, question])
+
+
 def clean_markdown_text(value: str) -> str:
     text_value = re.sub(r"`([^`]+)`", r"\1", value or "")
     text_value = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text_value)
@@ -1175,6 +1313,205 @@ def get_ollama_urls(request: Optional[Request] = None) -> List[str]:
         "http://127.0.0.1:11434",
         "http://host.docker.internal:11434",
     ]))
+
+
+def vector_norm(vector: List[float]) -> float:
+    return math.sqrt(sum(value * value for value in vector))
+
+
+def cosine_similarity(left: List[float], right: List[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    denominator = vector_norm(left) * vector_norm(right)
+    if not denominator:
+        return 0.0
+    return sum(a * b for a, b in zip(left, right)) / denominator
+
+
+def parse_embedding(value: str) -> List[float]:
+    try:
+        data = json.loads(value or "[]")
+        if isinstance(data, list):
+            return [float(item) for item in data]
+    except (TypeError, ValueError):
+        return []
+    return []
+
+
+def ollama_embed_texts(texts: List[str], request: Optional[Request] = None) -> Optional[List[List[float]]]:
+    clean_texts = [text.strip() for text in texts if text and text.strip()]
+    if not clean_texts:
+        return []
+
+    for base_url in get_ollama_urls(request):
+        if not base_url:
+            continue
+        try:
+            response = requests.post(
+                f"{base_url}/api/embed",
+                json={"model": OLLAMA_EMBED_MODEL, "input": clean_texts},
+                timeout=max(15.0, OLLAMA_TIMEOUT_SECONDS),
+            )
+            if response.status_code == 200:
+                embeddings = response.json().get("embeddings")
+                if isinstance(embeddings, list) and len(embeddings) == len(clean_texts):
+                    return [[float(value) for value in embedding] for embedding in embeddings]
+        except Exception:
+            pass
+
+        try:
+            embeddings: List[List[float]] = []
+            for text_value in clean_texts:
+                response = requests.post(
+                    f"{base_url}/api/embeddings",
+                    json={"model": OLLAMA_EMBED_MODEL, "prompt": text_value},
+                    timeout=max(15.0, OLLAMA_TIMEOUT_SECONDS),
+                )
+                if response.status_code != 200:
+                    embeddings = []
+                    break
+                embedding = response.json().get("embedding")
+                if not isinstance(embedding, list):
+                    embeddings = []
+                    break
+                embeddings.append([float(value) for value in embedding])
+            if len(embeddings) == len(clean_texts):
+                return embeddings
+        except Exception:
+            continue
+    return None
+
+
+def ai_page_content_hash(page: PageModel) -> str:
+    value = "\n".join([
+        page.id,
+        page.space_key or "",
+        page.title or "",
+        decrypt_text(page.content),
+        decrypt_text(page.subtopics),
+    ])
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def build_rag_embedding_text(page: PageModel, chunk: str, subtopic_title: Optional[str], page_space: Optional[SpaceModel]) -> str:
+    parts = [
+        f"Titulo: {page.title}",
+        f"Workspace: {page.space_key}",
+    ]
+    if page_space:
+        parts.append(f"Nombre del workspace: {page_space.name}")
+        if page_space.description:
+            parts.append(f"Descripcion del workspace: {page_space.description}")
+    if subtopic_title:
+        parts.append(f"Subtema: {subtopic_title}")
+    parts.append(chunk)
+    return "\n".join(parts)
+
+
+def ensure_rag_embeddings_for_pages(db: Session, pages: List[PageModel], spaces: List[SpaceModel], request: Optional[Request]) -> bool:
+    space_by_key = {space.key: space for space in spaces}
+    rag_available = True
+    for page in pages:
+        content_hash = ai_page_content_hash(page)
+        existing_count = (
+            db.query(AiEmbeddingModel)
+            .filter(AiEmbeddingModel.page_id == page.id, AiEmbeddingModel.content_hash == content_hash)
+            .count()
+        )
+        if existing_count:
+            continue
+
+        chunk_records = [
+            (chunk, is_code_chunk, subtopic_title)
+            for chunk, is_code_chunk, subtopic_title in build_ai_page_chunks(decrypt_text(page.content), decrypt_text(page.subtopics))
+            if chunk.strip()
+        ]
+        texts = [
+            build_rag_embedding_text(page, chunk, subtopic_title, space_by_key.get(page.space_key))
+            for chunk, _, subtopic_title in chunk_records
+        ]
+        embeddings = ollama_embed_texts(texts, request)
+        if embeddings is None:
+            rag_available = False
+            continue
+
+        db.query(AiEmbeddingModel).filter(AiEmbeddingModel.page_id == page.id).delete()
+        for (chunk, is_code_chunk, subtopic_title), embedding, embedding_text in zip(chunk_records, embeddings, texts):
+            chunk_hash = hashlib.sha256(f"{page.id}:{content_hash}:{embedding_text}".encode("utf-8")).hexdigest()
+            db.add(AiEmbeddingModel(
+                page_id=page.id,
+                space_key=page.space_key,
+                page_title=page.title,
+                source_type="page",
+                subtopic_title=subtopic_title,
+                content_hash=content_hash,
+                chunk_hash=chunk_hash,
+                is_code=is_code_chunk,
+                chunk_text=encrypt_text(chunk),
+                embedding_json=json.dumps(embedding),
+            ))
+        db.commit()
+    return rag_available
+
+
+def semantic_rag_sources(
+    db: Session,
+    question: str,
+    pages: List[PageModel],
+    spaces: List[SpaceModel],
+    request: Optional[Request],
+    asks_for_code: bool,
+    limit: int,
+) -> List[AiChatSource]:
+    if not pages:
+        return []
+    if not ensure_rag_embeddings_for_pages(db, pages, spaces, request):
+        return []
+
+    question_embedding_result = ollama_embed_texts([question], request)
+    if not question_embedding_result:
+        return []
+    question_embedding = question_embedding_result[0]
+    page_ids = [page.id for page in pages]
+    rows = (
+        db.query(AiEmbeddingModel)
+        .filter(AiEmbeddingModel.page_id.in_(page_ids))
+        .all()
+    )
+
+    scored: List[tuple[float, AiEmbeddingModel]] = []
+    for row in rows:
+        similarity = cosine_similarity(question_embedding, parse_embedding(row.embedding_json))
+        if similarity <= 0:
+            continue
+        code_boost = 0.08 if asks_for_code and row.is_code else 0.0
+        scored.append((similarity + code_boost, row))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    sources: List[AiChatSource] = []
+    seen: set[str] = set()
+    for score, row in scored:
+        source_key = f"rag:{row.page_id}:{row.subtopic_title or row.chunk_hash}"
+        if source_key in seen:
+            continue
+        chunk_text = decrypt_text(row.chunk_text)
+        excerpt_limit = 1200 if row.is_code else 620
+        excerpt = chunk_text[:excerpt_limit].strip()
+        if len(chunk_text) > excerpt_limit:
+            excerpt += "..."
+        sources.append(AiChatSource(
+            page_id=row.page_id,
+            page_title=row.page_title,
+            space_key=row.space_key,
+            source_type="page",
+            subtopic_title=row.subtopic_title,
+            excerpt=excerpt,
+            score=round(20 + (score * 20), 3),
+        ))
+        seen.add(source_key)
+        if len(sources) >= limit:
+            break
+    return sources
 
 
 def build_ollama_context(matches: List[AiChatSource]) -> str:
@@ -1547,6 +1884,67 @@ def request_space_storage(
     )
 
 
+@app.post("/api/spaces/{space_id}/markdown-images", response_model=MarkdownImageUploadRead)
+def upload_markdown_image(
+    space_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    check_permission(user, "gatewiki:view")
+    space = db.query(SpaceModel).filter(SpaceModel.id == space_id).first()
+    if not space:
+        raise HTTPException(status_code=404, detail="Workspace no encontrado.")
+    ensure_workspace_member(space, user, "subir imagenes a este workspace")
+
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Solo puedes subir archivos de imagen.")
+    image_bytes = file.file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="La imagen esta vacia.")
+    ocr_text = extract_ocr_text(image_bytes, content_type)
+
+    storage_workspace = forward_gatestorage_request("GET", f"/api/workspaces/gatewiki/{space.key.upper()}", request=request)
+    if not storage_workspace:
+        raise HTTPException(status_code=404, detail="Este workspace aun no tiene GateStorage activo. Solicita storage antes de subir imagenes.")
+    storage_workspace_id = storage_workspace.get("id")
+    if not storage_workspace_id:
+        raise HTTPException(status_code=502, detail="GateStorage no devolvio el workspace de almacenamiento.")
+
+    uploaded = upload_gatestorage_file_bytes(
+        f"/api/workspaces/{storage_workspace_id}/files",
+        request=request,
+        filename=file.filename or "imagen",
+        content_type=file.content_type or "application/octet-stream",
+        data=image_bytes,
+        folder=f"gatewiki-images/{space.key.lower()}",
+    )
+    file_id = uploaded.get("id")
+    if not file_id:
+        raise HTTPException(status_code=502, detail="GateStorage no devolvio el archivo subido.")
+
+    published = forward_gatestorage_request(
+        "PATCH",
+        f"/api/files/{file_id}/public",
+        request=request,
+        json={"is_public": True},
+    )
+    public_url = published.get("public_url")
+    if not public_url:
+        raise HTTPException(status_code=502, detail="GateStorage no pudo generar el link publico de la imagen.")
+
+    return MarkdownImageUploadRead(
+        url=external_gatestorage_url(public_url, request),
+        file_id=file_id,
+        filename=published.get("original_filename") or uploaded.get("original_filename") or file.filename or "imagen",
+        content_type=published.get("content_type") or uploaded.get("content_type") or file.content_type,
+        size_bytes=int(published.get("size_bytes") or uploaded.get("size_bytes") or 0),
+        ocr_text=ocr_text,
+    )
+
+
 # --- PÃ¡ginas ---
 @app.post("/api/ai-chat", response_model=AiChatResponse)
 def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -1579,8 +1977,9 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
     if not question_tokens:
         raise HTTPException(status_code=400, detail="Escribe una pregunta mas especifica.")
     asks_for_code = bool(re.search(r"\b(codigo|código|code|ejemplo)\b", question.lower()))
-    retrieval_tokens = set(question_tokens)
-    normalized_retrieval_tokens = normalized_ai_tokens(question)
+    contextual_question = build_contextual_ai_query(question, payload.history)
+    retrieval_tokens = ai_tokenize(contextual_question)
+    normalized_retrieval_tokens = normalized_ai_tokens(contextual_question)
     is_follow_up = bool(re.search(r"\b(ese|esa|eso|anterior|mismo|misma|subtema|tema|pero|info|informacion|información|dices|seguro|entonces|mmm)\b", question.lower()))
     if is_follow_up and payload.history:
         retrieval_tokens |= ai_tokenize(payload.history[-1].question)
@@ -1588,7 +1987,7 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
 
     spaces = visible_spaces_for_ai(db, user, payload.space_key)
     normalized_question_tokens = normalized_retrieval_tokens
-    asks_about_workspaces = bool(re.search(r"\b(workspace|workspaces|espacio|espacios)\b", question.lower()))
+    asks_about_workspaces = bool(re.search(r"\b(workspace|workspaces|espacio|espacios)\b", contextual_question.lower()))
     space_candidates: List[tuple[float, SpaceModel]] = []
     for space in spaces:
         name_tokens = normalized_ai_tokens(f"{space.name} {space.key}")
@@ -1633,7 +2032,7 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
                 continue
             overlap_count = len(retrieval_tokens & title_tokens)
             coverage = overlap_count / len(title_tokens)
-            phrase_match = clean_markdown_text(title).lower() in clean_markdown_text(question).lower()
+            phrase_match = clean_markdown_text(title).lower() in clean_markdown_text(contextual_question).lower()
             confidence = (coverage * 10.0) + (overlap_count * 2.0) + (5.0 if phrase_match else 0.0)
             if overlap_count:
                 subtopic_candidates.append((confidence, page.id, title))
@@ -1681,6 +2080,17 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
                 )
             )
 
+    rag_sources = semantic_rag_sources(
+        db=db,
+        question=contextual_question,
+        pages=pages,
+        spaces=spaces,
+        request=request,
+        asks_for_code=asks_for_code,
+        limit=max(payload.max_sources * 2, 6),
+    )
+    ranked_sources.extend(rag_sources)
+
     if targeted_subtopics:
         ranked_sources = [
             source for source in ranked_sources
@@ -1710,12 +2120,13 @@ def ai_chat(payload: AiChatRequest, request: Request, db: Session = Depends(get_
         sources=selected_sources,
         searched_pages=len(pages),
     )
+    engine_name = "rag_ollama" if ollama_answer and rag_sources else "ollama" if ollama_answer else "rag_retrieval" if rag_sources else "retrieval"
     save_ai_interaction(
         db,
         user,
         payload,
         response,
-        "ollama" if ollama_answer else "retrieval",
+        engine_name,
         round((time.perf_counter() - started_at) * 1000),
     )
     return response

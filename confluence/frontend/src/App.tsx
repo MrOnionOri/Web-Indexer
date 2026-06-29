@@ -440,6 +440,15 @@ export default function App() {
     }
   };
 
+  const handleUploadMarkdownImage = async (spaceKey: string, file: File) => {
+    const space = spaces.find((item) => item.key.toUpperCase() === spaceKey.toUpperCase());
+    if (!space) {
+      throw new Error("Selecciona un workspace antes de subir imagenes.");
+    }
+    const uploaded = await api.uploadMarkdownImage(token, space.id, file);
+    return { url: uploaded.url, ocrText: uploaded.ocr_text || "" };
+  };
+
   const handleDeletePage = async (id: string) => {
     if (!confirm("¿Deseas eliminar esta página de forma permanente?")) return;
 
@@ -652,6 +661,7 @@ export default function App() {
               spaces={spaces}
               allUsers={allUsers}
               onSubmit={handleCreateOrUpdatePage}
+              onUploadMarkdownImage={(file) => handleUploadMarkdownImage(editPageSpace, file)}
               onCancel={() => navigate(editPageId ? `/page/${editPageId}` : "/dashboard")}
             />
           )}

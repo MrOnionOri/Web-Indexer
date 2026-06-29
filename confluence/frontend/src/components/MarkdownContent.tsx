@@ -1,8 +1,9 @@
 import React, { ReactNode, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
-import rehypeSanitize from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import type { Options as SanitizeOptions } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import "highlight.js/styles/vs2015.css";
 
@@ -17,11 +18,39 @@ interface CodeBlockProps {
   variant: "default" | "chat";
 }
 
+const markdownSanitizeSchema: SanitizeOptions = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    a: [
+      ...(defaultSchema.attributes?.a || []),
+      "href",
+      "title"
+    ],
+    img: [
+      ...(defaultSchema.attributes?.img || []),
+      "alt",
+      "title",
+      "width",
+      "height"
+    ]
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ["http", "https", "mailto"],
+    src: ["http", "https"]
+  }
+};
+
 function textFromNode(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textFromNode).join("");
   if (React.isValidElement<{ children?: ReactNode }>(node)) return textFromNode(node.props.children);
   return "";
+}
+
+function isExternalHref(href: string) {
+  return /^https?:\/\//i.test(href);
 }
 
 function CodeBlock({ children, language, variant }: CodeBlockProps) {
@@ -58,8 +87,33 @@ export default function MarkdownContent({ content, variant = "default" }: Markdo
     <div className={`markdown-content markdown-content-${variant}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize, rehypeHighlight]}
+        rehypePlugins={[[rehypeSanitize, markdownSanitizeSchema], rehypeHighlight]}
         components={{
+          a({ href, children, ...props }) {
+            const linkHref = href || "";
+            const external = isExternalHref(linkHref);
+            return (
+              <a
+                href={linkHref}
+                target={external ? "_blank" : undefined}
+                rel={external ? "noopener noreferrer" : undefined}
+                {...props}
+              >
+                {children}
+                {external && <ExternalLink className="markdown-link-icon" size={13} aria-hidden="true" />}
+              </a>
+            );
+          },
+          img({ alt, ...props }) {
+            return (
+              <img
+                alt={alt || ""}
+                loading="lazy"
+                decoding="async"
+                {...props}
+              />
+            );
+          },
           pre({ children }) {
             const codeChild = React.isValidElement<{ className?: string }>(children) ? children : null;
             const className = codeChild?.props.className || "";

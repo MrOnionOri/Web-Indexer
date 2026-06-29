@@ -491,8 +491,17 @@ def get_local_user_from_token(token: str, db: Session) -> dict | None:
         "full_name": row["full_name"],
         "status": row["status"],
         "is_platform_admin": bool(row["is_platform_admin"]),
-        "permissions": get_local_effective_permissions(db, row["id"]),
+        "permissions": safe_local_permissions(db, row["id"], payload),
     }
+
+
+def safe_local_permissions(db: Session, user_id: str, token_payload: dict) -> list[str]:
+    try:
+        return get_local_effective_permissions(db, user_id)
+    except Exception as exc:
+        print("Note: local permission lookup failed, using token permissions:", exc)
+        permissions = token_payload.get("permissions") or []
+        return sorted({str(permission) for permission in permissions})
 
 
 def gatestack_session_headers(request: Request, credentials: HTTPAuthorizationCredentials | None = None) -> dict:

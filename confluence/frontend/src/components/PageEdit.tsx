@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
-import MarkdownEditor, { EditorMode } from "./MarkdownEditor";
+import MarkdownEditor, { EditorMode, MarkdownImageUploadResult } from "./MarkdownEditor";
 import { parseSubtopics, serializeSubtopics, SubtopicItem } from "../subtopics";
 
 interface Space {
@@ -38,6 +38,7 @@ interface PageEditProps {
   allUsers: UserListItem[];
   onSubmit: (e: FormEvent) => void;
   onCancel: () => void;
+  onUploadMarkdownImage?: (file: File) => Promise<MarkdownImageUploadResult>;
 }
 
 export default function PageEdit({
@@ -59,7 +60,8 @@ export default function PageEdit({
   spaces,
   allUsers,
   onSubmit,
-  onCancel
+  onCancel,
+  onUploadMarkdownImage
 }: PageEditProps) {
   const [searchText, setSearchText] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -175,6 +177,7 @@ export default function PageEdit({
             placeholder="Escribe aqui en formato Markdown..."
             emptyTitle="Empieza tu pagina"
             emptyMessage="Escribe en Markdown y veras el resultado aqui en tiempo real."
+            onImageUpload={onUploadMarkdownImage}
           />
         </div>
 
@@ -238,6 +241,7 @@ export default function PageEdit({
                   placeholder="Escribe el contenido del subtema en Markdown..."
                   emptyTitle="Subtema vacio"
                   emptyMessage="Escribe en Markdown y veras el resultado aqui en tiempo real."
+                  onImageUpload={onUploadMarkdownImage}
                 />
               </div>
             </div>

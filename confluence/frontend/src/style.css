@@ -1447,6 +1447,36 @@ h1, h2, h3, h4, h5, h6 {
     margin-bottom: 18px;
 }
 
+.page-content a {
+    color: var(--color-primary);
+    font-weight: 650;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    word-break: break-word;
+}
+
+.page-content a:hover {
+    color: var(--color-primary-hover);
+}
+
+.markdown-link-icon {
+    display: inline-block;
+    margin-left: 4px;
+    vertical-align: -2px;
+}
+
+.page-content img {
+    display: block;
+    max-width: min(100%, 920px);
+    height: auto;
+    margin: 18px auto 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+}
+
 .page-content ul, .page-content ol {
     margin-bottom: 22px;
     padding-left: 22px;
@@ -1584,6 +1614,10 @@ h1, h2, h3, h4, h5, h6 {
     overflow: hidden;
 }
 
+.hidden-file-input {
+    display: none;
+}
+
 .editor-toolbar {
     display: flex;
     gap: 8px;
@@ -1637,6 +1671,11 @@ h1, h2, h3, h4, h5, h6 {
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-title);
     border-color: var(--border-color);
+}
+
+.toolbar-btn:disabled {
+    cursor: wait;
+    opacity: 0.65;
 }
 
 .editor-body {

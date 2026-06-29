@@ -148,6 +148,15 @@ export interface StorageRequest {
   updated_at: string;
 }
 
+export interface MarkdownImageUpload {
+  url: string;
+  file_id: string;
+  filename: string;
+  content_type?: string | null;
+  size_bytes: number;
+  ocr_text?: string;
+}
+
 export interface AiChatSource {
   page_id?: string | null;
   page_title: string;
@@ -201,7 +210,8 @@ type RequestOptions = Omit<RequestInit, "headers"> & {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const hasBody = options.body !== undefined;
-  if (hasBody && !headers.has("Content-Type")) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (hasBody && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const method = (options.method ?? "GET").toUpperCase();
@@ -282,6 +292,15 @@ export const api = {
       token,
       body: JSON.stringify({ requested_gb: requestedGb, reason })
     }),
+  uploadMarkdownImage: (token: string | null, spaceId: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<MarkdownImageUpload>(`/api/spaces/${spaceId}/markdown-images`, {
+      method: "POST",
+      token,
+      body
+    });
+  },
   savePage: (token: string | null, pageId: string | null, payload: unknown) =>
     request<Page>(pageId ? `/api/pages/${pageId}` : "/api/pages", {
       method: pageId ? "PUT" : "POST",
