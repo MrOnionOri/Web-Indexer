@@ -6,7 +6,11 @@ param(
   [string]$DbPassword = "",
   [string]$DbName = "gatestack",
   [string]$SecretKey = "",
-  [string]$DataEncryptionKey = ""
+  [string]$DataEncryptionKey = "",
+  [string]$OllamaBaseUrl = "",
+  [string]$OllamaChatModel = "",
+  [string]$OllamaEmbedModel = "",
+  [string]$TesseractCmd = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,13 +79,15 @@ function Start-LocalProcess {
 
   $outLog = Join-Path $LogDir "$Name.out.log"
   $errLog = Join-Path $LogDir "$Name.err.log"
-  Start-Process -FilePath $FilePath `
+  $process = Start-Process -FilePath $FilePath `
     -ArgumentList $Arguments `
     -WorkingDirectory $WorkingDirectory `
     -WindowStyle Hidden `
     -RedirectStandardOutput $outLog `
-    -RedirectStandardError $errLog
-  Write-Host "Started $Name"
+    -RedirectStandardError $errLog `
+    -PassThru
+  Set-Content -Path (Join-Path $LogDir "$Name.pid") -Value $process.Id
+  Write-Host "Started $Name [$($process.Id)]"
 }
 
 $env:DB_HOST = $DbHost
@@ -93,6 +99,15 @@ $env:DATA_ENCRYPTION_KEY = $DataEncryptionKey
 $env:ACCESS_TOKEN_EXPIRE_MINUTES = "480"
 $env:GATESTACK_API_URL = "http://${HostIp}:8000"
 $env:GATESTORAGE_API_URL = "http://${HostIp}:8002"
+$env:OLLAMA_BASE_URL = if ($OllamaBaseUrl) { $OllamaBaseUrl.TrimEnd("/") } elseif ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd("/") } else { "http://127.0.0.1:11434" }
+$env:OLLAMA_CHAT_MODEL = if ($OllamaChatModel) { $OllamaChatModel } elseif ($env:OLLAMA_CHAT_MODEL) { $env:OLLAMA_CHAT_MODEL } else { "gatewiki-assistant" }
+$env:OLLAMA_EMBED_MODEL = if ($OllamaEmbedModel) { $OllamaEmbedModel } elseif ($env:OLLAMA_EMBED_MODEL) { $env:OLLAMA_EMBED_MODEL } else { "nomic-embed-text" }
+if (-not $TesseractCmd -and (Test-Path "C:\Program Files\Tesseract-OCR\tesseract.exe")) {
+  $TesseractCmd = "C:\Program Files\Tesseract-OCR\tesseract.exe"
+}
+if ($TesseractCmd) {
+  $env:TESSERACT_CMD = $TesseractCmd
+}
 $env:STORAGE_ROOT = (Join-Path $Root "gatestorage\data\storage")
 $env:BACKEND_CORS_ORIGINS = "http://${HostIp}:5173,http://${HostIp}:5174,http://${HostIp}:5175,http://${HostIp}:8001,http://localhost:5173,http://localhost:5174,http://localhost:5175"
 $env:VITE_SERVER_HOST = $HostIp

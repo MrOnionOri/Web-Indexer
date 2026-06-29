@@ -106,6 +106,9 @@ OLLAMA_FALLBACK_URLS = [
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "gatewiki-assistant")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45"))
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+if TESSERACT_CMD:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
