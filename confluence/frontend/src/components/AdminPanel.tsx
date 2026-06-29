@@ -57,6 +57,8 @@ export default function AdminPanel({
   const [aiSavingId, setAiSavingId] = useState("");
   const [aiLoading, setAiLoading] = useState(true);
   const [aiNotice, setAiNotice] = useState("");
+  const [ragLoading, setRagLoading] = useState(false);
+  const [ragNotice, setRagNotice] = useState("");
   const chatItems = feedback.filter((item) => item.title === "Chat con admin");
   const chatThreads = useMemo(() => {
     const grouped = new Map<string, FeedbackItem[]>();
@@ -132,6 +134,19 @@ export default function AdminPanel({
       setAiNotice(err.message ?? "No se pudo guardar la revision de IA.");
     } finally {
       setAiSavingId("");
+    }
+  }
+
+  async function reindexRag() {
+    setRagLoading(true);
+    setRagNotice("");
+    try {
+      const result = await api.reindexAiRag(token);
+      setRagNotice(`${result.message} ${result.indexed_pages}/${result.pages_total} paginas, ${result.chunks_total} chunks, ${result.duration_ms} ms.`);
+    } catch (err: any) {
+      setRagNotice(err.message ?? "No se pudo reindexar el RAG.");
+    } finally {
+      setRagLoading(false);
     }
   }
 
@@ -213,10 +228,20 @@ export default function AdminPanel({
               <Database size={16} />
               <span>{seedLoading ? "Inicializando..." : "Inicializar Datos Demostrativos"}</span>
             </button>
+            <button className="btn-secondary" type="button" onClick={() => void reindexRag()} disabled={ragLoading}>
+              <RefreshCw size={16} className={ragLoading ? "spin" : ""} />
+              <span>{ragLoading ? "Reindexando RAG..." : "Reindexar RAG de la IA"}</span>
+            </button>
             {seedSuccessMsg && (
               <div className="success-alert alert-box" style={{ marginTop: "16px", background: "var(--color-success-glow)", border: "1px solid rgba(16,185,129,0.3)", color: "#34d399" }}>
                 <CheckCircle size={16} />
                 <span>{seedSuccessMsg}</span>
+              </div>
+            )}
+            {ragNotice && (
+              <div className="success-alert alert-box" style={{ marginTop: "16px", background: "var(--color-success-glow)", border: "1px solid rgba(59,130,246,0.25)", color: "var(--color-primary)" }}>
+                <CheckCircle size={16} />
+                <span>{ragNotice}</span>
               </div>
             )}
           </div>

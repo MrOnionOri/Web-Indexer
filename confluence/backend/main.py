@@ -531,6 +531,16 @@ class AiInteractionReviewUpdate(BaseModel):
     review_note: str = Field(default="", max_length=2000)
 
 
+class AiReindexResponse(BaseModel):
+    status: str
+    message: str
+    pages_total: int
+    indexed_pages: int
+    chunks_total: int
+    model_name: str
+    duration_ms: int
+
+
 class AiInteractionRead(BaseModel):
     id: str
     session_id: str
@@ -1411,7 +1421,7 @@ def build_rag_embedding_text(page: PageModel, chunk: str, subtopic_title: Option
     return "\n".join(parts)
 
 
-def ensure_rag_embeddings_for_pages(db: Session, pages: List[PageModel], spaces: List[SpaceModel], request: Optional[Request]) -> bool:
+def ensure_rag_embeddings_for_pages(db: Session, pages: List[PageModel], spaces: List[SpaceModel], request: Optional[Request], force: bool = False) -> bool:
     space_by_key = {space.key: space for space in spaces}
     rag_available = True
     for page in pages:
@@ -1421,7 +1431,7 @@ def ensure_rag_embeddings_for_pages(db: Session, pages: List[PageModel], spaces:
             .filter(AiEmbeddingModel.page_id == page.id, AiEmbeddingModel.content_hash == content_hash)
             .count()
         )
-        if existing_count:
+        if existing_count and not force:
             continue
 
         chunk_records = [
@@ -1455,6 +1465,22 @@ def ensure_rag_embeddings_for_pages(db: Session, pages: List[PageModel], spaces:
             ))
         db.commit()
     return rag_available
+
+
+def count_current_rag_embeddings(db: Session, pages: List[PageModel]) -> tuple[int, int]:
+    indexed_pages = 0
+    chunks_total = 0
+    for page in pages:
+        content_hash = ai_page_content_hash(page)
+        page_chunks = (
+            db.query(AiEmbeddingModel)
+            .filter(AiEmbeddingModel.page_id == page.id, AiEmbeddingModel.content_hash == content_hash)
+            .count()
+        )
+        if page_chunks:
+            indexed_pages += 1
+            chunks_total += page_chunks
+    return indexed_pages, chunks_total
 
 
 def semantic_rag_sources(
@@ -2149,6 +2175,47 @@ def get_admin_ai_interactions(
         query = query.filter(AiInteractionModel.review_status == review_status)
     items = query.order_by(AiInteractionModel.created_at.desc()).limit(safe_limit).all()
     return [serialize_ai_interaction(item) for item in items]
+
+
+@app.post("/api/ai-rag/reindex", response_model=AiReindexResponse)
+def reindex_ai_rag(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    check_permission(user, "gatewiki:admin")
+    started_at = time.perf_counter()
+    pages = db.query(PageModel).all()
+    spaces = db.query(SpaceModel).all()
+    page_ids = [page.id for page in pages]
+    if page_ids:
+        db.query(AiEmbeddingModel).filter(~AiEmbeddingModel.page_id.in_(page_ids)).delete(synchronize_session=False)
+    else:
+        db.query(AiEmbeddingModel).delete()
+    db.commit()
+
+    rag_available = ensure_rag_embeddings_for_pages(db, pages, spaces, request, force=True)
+    indexed_pages, chunks_total = count_current_rag_embeddings(db, pages)
+    duration_ms = round((time.perf_counter() - started_at) * 1000)
+    if not rag_available:
+        return AiReindexResponse(
+            status="partial",
+            message="El reindexado termino parcial: Ollama o el modelo de embeddings no respondio para todas las paginas.",
+            pages_total=len(pages),
+            indexed_pages=indexed_pages,
+            chunks_total=chunks_total,
+            model_name=OLLAMA_EMBED_MODEL,
+            duration_ms=duration_ms,
+        )
+    return AiReindexResponse(
+        status="ok",
+        message="RAG reindexado correctamente.",
+        pages_total=len(pages),
+        indexed_pages=indexed_pages,
+        chunks_total=chunks_total,
+        model_name=OLLAMA_EMBED_MODEL,
+        duration_ms=duration_ms,
+    )
 
 
 @app.patch("/api/ai-interactions/{interaction_id}/review", response_model=AiInteractionRead)

@@ -202,6 +202,16 @@ export interface AiInteraction {
   created_at: string;
 }
 
+export interface AiReindexResponse {
+  status: "ok" | "partial" | string;
+  message: string;
+  pages_total: number;
+  indexed_pages: number;
+  chunks_total: number;
+  model_name: string;
+  duration_ms: number;
+}
+
 type RequestOptions = Omit<RequestInit, "headers"> & {
   token?: string | null;
   headers?: HeadersInit;
@@ -259,6 +269,8 @@ export const api = {
       token,
       body: JSON.stringify({ review_status: reviewStatus, review_note: reviewNote })
     }),
+  reindexAiRag: (token: string | null) =>
+    request<AiReindexResponse>("/api/ai-rag/reindex", { method: "POST", token }),
   createFeedback: (token: string | null, payload: unknown) =>
     request<FeedbackItem>("/api/feedback", { method: "POST", token, body: JSON.stringify(payload) }),
   respondFeedback: (token: string | null, feedbackId: string, publicResponse: string) =>
