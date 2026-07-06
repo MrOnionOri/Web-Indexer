@@ -1,9 +1,11 @@
+import os
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import hash_password
-from app.models import Permission, PermissionTemplate, TemplatePermission, User, UserStatus
+from app.models import Permission, PermissionTemplate, RegisteredApp, TemplatePermission, User, UserStatus
 
 BASE_PERMISSIONS = {
     "users:view": "View users",
@@ -36,6 +38,12 @@ BASE_PERMISSIONS = {
     "gatestorage:view": "View GateStorage workspace allocations",
     "gatestorage:request": "Request storage for owned workspaces",
     "gatestorage:admin": "Review and administer GateStorage allocations",
+    "video_watcher:view": "View Video Watcher visual QA reports",
+    "video_watcher:analyze": "Upload and analyze videos in Video Watcher",
+    "video_watcher:review": "Review videos and create training annotations in Video Watcher",
+    "video_watcher:ask_ai": "Ask AI for frame and segment analysis in Video Watcher",
+    "video_watcher:train": "Approve Video Watcher annotations for training datasets",
+    "video_watcher:admin": "Administer the Video Watcher application",
 }
 
 TEMPLATES = {
@@ -44,6 +52,10 @@ TEMPLATES = {
     "Feedback Manager Template": ["feedback:view", "feedback:respond", "feedback:internal"],
     "GateStorage Admin Template": ["gatestorage:view", "gatestorage:request", "gatestorage:admin"],
     "GateStorage User Template": ["gatestorage:view", "gatestorage:request"],
+    "Video Watcher Admin Template": ["video_watcher:view", "video_watcher:analyze", "video_watcher:review", "video_watcher:ask_ai", "video_watcher:train", "video_watcher:admin"],
+    "Video Watcher Reviewer Template": ["video_watcher:view", "video_watcher:review", "video_watcher:ask_ai"],
+    "Video Watcher Uploader Template": ["video_watcher:view", "video_watcher:analyze"],
+    "Video Watcher User Template": ["video_watcher:view", "video_watcher:analyze", "video_watcher:review", "video_watcher:ask_ai"],
     "Viewer Template": ["apps:view", "gatewiki:view"],
     "GateWiki Admin Template": [
         "gatewiki:view",
@@ -60,6 +72,15 @@ TEMPLATES = {
         "gatewiki:create_page",
         "gatewiki:edit_page"
     ],
+}
+
+REGISTERED_APPS = {
+    "video-watcher": {
+        "name": "Video Watcher",
+        "description": "Visual QA service for reviewing TV recordings and detected screen issues.",
+        "homepage_url": os.getenv("VIDEO_WATCHER_FRONTEND_URL", "http://192.168.1.150:5176/"),
+        "required_permission_code": "video_watcher:view",
+    }
 }
 
 
@@ -129,6 +150,17 @@ def bootstrap(db: Session) -> None:
             permission = permission_by_code[code]
             if permission.id not in existing:
                 db.add(TemplatePermission(template_id=template.id, permission_id=permission.id))
+
+    for slug, app_data in REGISTERED_APPS.items():
+        registered_app = db.scalar(select(RegisteredApp).where(RegisteredApp.slug == slug))
+        if not registered_app:
+            registered_app = RegisteredApp(slug=slug, **app_data)
+            db.add(registered_app)
+        else:
+            registered_app.name = app_data["name"]
+            registered_app.description = app_data["description"]
+            registered_app.homepage_url = app_data["homepage_url"]
+            registered_app.required_permission_code = app_data["required_permission_code"]
 
     if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
         admin = db.scalar(select(User).where(User.email == settings.bootstrap_admin_email))

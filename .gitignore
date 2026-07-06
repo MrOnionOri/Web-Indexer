@@ -11,6 +11,12 @@ dist/
 *.log
 
 # Local env and storage
+video-watcher/backend/.env.local
+video-watcher/backend/.venv/
+video-watcher/backend/data/
+video-watcher/frontend/.env.local
+video-watcher/frontend/node_modules/
+video-watcher/frontend/dist/
 
 
 backend/storage/

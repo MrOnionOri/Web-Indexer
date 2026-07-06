@@ -1,0 +1,22 @@
+ISSUE_TYPES = {
+    "UI_OVERFLOW",
+    "UI_OVERLAP",
+    "UI_MISSING_ELEMENT",
+    "UI_ALIGNMENT_ERROR",
+    "UI_COLOR_CONTRAST",
+    "UI_EMPTY_STATE_BROKEN",
+    "UI_LOADING_STUCK",
+    "UI_ERROR_MESSAGE",
+    "UI_LAYOUT_BROKEN",
+    "UI_DUPLICATE_ELEMENT",
+    "UI_VISUAL_GLITCH",
+    "BLACK_SCREEN",
+    "PIXELATION",
+    "FREEZE_DETECTED",
+    "TEXT_NOT_READABLE",
+    "UNEXPECTED_MODAL",
+    "UNKNOWN",
+    "NO_ISSUE",
+}
+
+SEVERITIES = {"none", "low", "medium", "high", "critical"}

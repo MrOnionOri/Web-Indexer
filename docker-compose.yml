@@ -1,22 +1,4 @@
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: gatestack-mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
-      MYSQL_DATABASE: ${DB_NAME:-gatestack}
-      MYSQL_USER: ${MYSQL_APP_USER:-gatestack_app}
-      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
-    ports:
-      - "3307:3306"
-    volumes:
-      - gatestack_mysql:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   confluence:
     build: ./confluence
     container_name: confluence-service
@@ -94,6 +76,45 @@ services:
       - "host.docker.internal:host-gateway"
     restart: always
 
+  video-watcher:
+    build: ./video-watcher/backend
+    container_name: video-watcher-service
+    ports:
+      - "8003:8003"
+    volumes:
+      - video_watcher_data:/app/data
+    environment:
+      - GATESTACK_API_URL=http://host.docker.internal:8000
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${VIDEOWATCHER_DB_USER:?Set VIDEOWATCHER_DB_USER in .env}
+      - DB_PASSWORD=${VIDEOWATCHER_DB_PASSWORD:?Set VIDEOWATCHER_DB_PASSWORD in .env}
+      - DB_NAME=${DB_NAME:-gatestack}
+      - VIDEO_WATCHER_DATA_ROOT=/app/data
+      - FFMPEG_PATH=ffmpeg
+      - LLM_PROVIDER=${VIDEO_WATCHER_LLM_PROVIDER:-mock}
+      - LLM_MODEL=${VIDEO_WATCHER_LLM_MODEL:-mock-vision-verifier}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
+  video-watcher-frontend:
+    image: node:22-alpine
+    container_name: video-watcher-frontend
+    working_dir: /app
+    volumes:
+      - ./video-watcher/frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5176"
+    ports:
+      - "5176:5176"
+    environment:
+      - VITE_SERVER_HOST=${VITE_SERVER_HOST:-192.168.1.150}
+      - VITE_SERVER_PROTOCOL=${VITE_SERVER_PROTOCOL:-http}
+      - VITE_VIDEO_WATCHER_BACKEND_PORT=${VITE_VIDEO_WATCHER_BACKEND_PORT:-8003}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
 volumes:
-  gatestack_mysql:
   gatestorage_data:
+  video_watcher_data:
