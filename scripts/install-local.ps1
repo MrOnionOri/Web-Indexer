@@ -89,10 +89,12 @@ GRANT ALL PRIVILEGES ON ``$Database``.* TO '$escapedUser'@'$HostName';
 Ensure-Venv (Join-Path $Root "backend")
 Ensure-Venv (Join-Path $Root "confluence\backend")
 Ensure-Venv (Join-Path $Root "gatestorage\backend")
+Ensure-Venv (Join-Path $Root "gatechat\backend")
 
 Pip-Install (Join-Path $Root "backend")
 Pip-Install (Join-Path $Root "confluence\backend")
 Pip-Install (Join-Path $Root "gatestorage\backend")
+Pip-Install (Join-Path $Root "gatechat\backend")
 
 Push-Location (Join-Path $Root "frontend")
 npm install
@@ -106,6 +108,10 @@ Push-Location (Join-Path $Root "gatestorage\frontend")
 npm install
 Pop-Location
 
+Push-Location (Join-Path $Root "gatechat\frontend")
+npm install
+Pop-Location
+
 $mysql = Get-Command mysql -ErrorAction SilentlyContinue
 if ($mysql -and $DbPassword) {
   $sql = @"
@@ -116,6 +122,8 @@ $(New-AppUserSql $env:GATEWIKI_DB_USER $env:GATEWIKI_DB_PASSWORD "localhost" $Db
 $(New-AppUserSql $env:GATEWIKI_DB_USER $env:GATEWIKI_DB_PASSWORD "%" $DbName)
 $(New-AppUserSql $env:GATESTORAGE_DB_USER $env:GATESTORAGE_DB_PASSWORD "localhost" $DbName)
 $(New-AppUserSql $env:GATESTORAGE_DB_USER $env:GATESTORAGE_DB_PASSWORD "%" $DbName)
+$(New-AppUserSql $env:GATECHAT_DB_USER $env:GATECHAT_DB_PASSWORD "localhost" $DbName)
+$(New-AppUserSql $env:GATECHAT_DB_USER $env:GATECHAT_DB_PASSWORD "%" $DbName)
 FLUSH PRIVILEGES;
 "@
   & $mysql.Source -h $DbHost -P $DbPort -u $DbUser "-p$DbPassword" -e $sql

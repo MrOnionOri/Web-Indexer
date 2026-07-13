@@ -1,5 +1,5 @@
 param(
-  [int[]]$Ports = @(8000, 8001, 8002, 5173, 5174, 5175)
+  [int[]]$Ports = @(8000, 8001, 8002, 8013, 5173, 5174, 5175, 5186)
 )
 
 $ErrorActionPreference = "Continue"
@@ -34,4 +34,4 @@ foreach ($port in $Ports) {
   }
 }
 
-Write-Host "Local GateStack/GateWiki/GateStorage ports stopped."
+Write-Host "Local GateStack/GateWiki/GateStorage/GateChat ports stopped."

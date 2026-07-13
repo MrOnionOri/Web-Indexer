@@ -115,6 +115,40 @@ services:
       - "host.docker.internal:host-gateway"
     restart: always
 
+  gatechat:
+    build: ./gatechat/backend
+    container_name: gatechat-service
+    ports:
+      - "8013:8013"
+    environment:
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${GATECHAT_DB_USER:?Set GATECHAT_DB_USER in .env}
+      - DB_PASSWORD=${GATECHAT_DB_PASSWORD:?Set GATECHAT_DB_PASSWORD in .env}
+      - DB_NAME=${DB_NAME:-gatestack}
+      - GATECHAT_OLLAMA_BASE_URL=${GATECHAT_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - GATECHAT_DEFAULT_MODEL=${GATECHAT_DEFAULT_MODEL:-qwen2.5:7b-instruct}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
+  gatechat-frontend:
+    image: node:22-alpine
+    container_name: gatechat-frontend
+    working_dir: /app
+    volumes:
+      - ./gatechat/frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5186"
+    ports:
+      - "5186:5186"
+    environment:
+      - VITE_SERVER_HOST=${VITE_SERVER_HOST:-192.168.1.150}
+      - VITE_SERVER_PROTOCOL=${VITE_SERVER_PROTOCOL:-http}
+      - VITE_GATECHAT_BACKEND_PORT=${VITE_GATECHAT_BACKEND_PORT:-8013}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
 volumes:
   gatestorage_data:
   video_watcher_data:

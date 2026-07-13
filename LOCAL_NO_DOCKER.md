@@ -15,9 +15,11 @@ Recomendado para la PC del trabajo:
 - GateStack API: `http://TU_IP:8000`
 - GateWiki API: `http://TU_IP:8001`
 - GateStorage API: `http://TU_IP:8002`
+- GateChat API: `http://TU_IP:8013`
 - GateStack web: `http://TU_IP:5173`
 - GateWiki web: `http://TU_IP:5174`
 - GateStorage web: `http://TU_IP:5175`
+- GateChat web: `http://TU_IP:5186`
 
 ## Arranque automatico
 
@@ -83,6 +85,20 @@ logs/local/
 
 ```powershell
 .\scripts\stop-local.ps1
+```
+
+## GateChat sin Docker
+
+GateChat es independiente de GateWiki/GateStack y usa Ollama + MySQL.
+
+```powershell
+.\scripts\run-gatechat-local.ps1
+```
+
+Para usar otro modelo:
+
+```powershell
+.\scripts\run-gatechat-local.ps1 -Model "qwen2.5:14b-instruct"
 ```
 
 ## Notas
