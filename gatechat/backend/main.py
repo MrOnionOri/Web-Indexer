@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import os
 import time
 import uuid
@@ -8,11 +11,16 @@ from urllib.parse import quote_plus
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from starlette.middleware.base import BaseHTTPMiddleware
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 for parent in Path(__file__).resolve().parents:
     env_path = parent / ".env"
@@ -27,6 +35,94 @@ DB_PASSWORD = os.getenv("DB_PASSWORD") or os.getenv("GATECHAT_DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "gatestack")
 OLLAMA_BASE_URL = os.getenv("GATECHAT_OLLAMA_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
 DEFAULT_MODEL = os.getenv("GATECHAT_DEFAULT_MODEL", "qwen2.5:7b-instruct")
+SECURITY_KEY_PATH = Path(os.getenv("GATECHAT_SECURITY_KEY_PATH", Path(__file__).resolve().parent / ".gatechat-private-key.pem"))
+REQUIRE_HTTPS = os.getenv("GATECHAT_REQUIRE_HTTPS", "true").lower() not in {"0", "false", "no"}
+ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("GATECHAT_ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+
+def load_or_create_private_key():
+    if SECURITY_KEY_PATH.is_file():
+        return serialization.load_pem_private_key(SECURITY_KEY_PATH.read_bytes(), password=None)
+    SECURITY_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+    SECURITY_KEY_PATH.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    try:
+        SECURITY_KEY_PATH.chmod(0o600)
+    except OSError:
+        pass
+    return private_key
+
+
+PRIVATE_KEY = load_or_create_private_key()
+PUBLIC_KEY_PEM = PRIVATE_KEY.public_key().public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+).decode("ascii")
+PUBLIC_KEY_FINGERPRINT = hashlib.sha256(PUBLIC_KEY_PEM.encode("utf-8")).hexdigest()
+
+
+def decode_base64(value: str, field: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Sobre cifrado invalido: {field} no es base64 valido.") from exc
+
+
+def decrypt_envelope(envelope: dict[str, Any]) -> bytes:
+    if envelope.get("encrypted") is not True:
+        raise HTTPException(status_code=400, detail="La peticion cifrada debe incluir encrypted=true.")
+    encrypted_key = decode_base64(str(envelope.get("key", "")), "key")
+    nonce = decode_base64(str(envelope.get("nonce", "")), "nonce")
+    ciphertext = decode_base64(str(envelope.get("payload", "")), "payload")
+    if len(nonce) != 12:
+        raise HTTPException(status_code=400, detail="El nonce AES-GCM debe tener 12 bytes.")
+    try:
+        aes_key = PRIVATE_KEY.decrypt(
+            encrypted_key,
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+        )
+        plaintext = AESGCM(aes_key).decrypt(nonce, ciphertext, None)
+        json.loads(plaintext.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="No se pudo descifrar la peticion.") from exc
+    return plaintext
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if REQUIRE_HTTPS and request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+            host = request.url.hostname or ""
+            forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+            if forwarded_proto != "https" and host not in LOCAL_HOSTS:
+                return JSONResponse(status_code=403, content={"detail": "HTTPS es obligatorio para peticiones sensibles de GateChat."})
+
+        if request.headers.get("x-gatechat-encryption") == "aes256gcm+rsa-oaep-sha256":
+            try:
+                envelope = json.loads((await request.body()).decode("utf-8"))
+                plaintext = decrypt_envelope(envelope)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            async def receive():
+                return {"type": "http.request", "body": plaintext, "more_body": False}
+            request = Request(request.scope, receive)
+
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if REQUIRE_HTTPS:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
 DATABASE_URL = (
     f"mysql+pymysql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
@@ -266,9 +362,10 @@ def ollama_chat(session: ChatSessionModel, history: list[dict[str, str]]) -> tup
 
 
 app = FastAPI(title="GateChat API", version="0.1.0")
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -278,6 +375,11 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+
+
+@app.get("/api/security/public-key")
+def security_public_key() -> dict[str, str]:
+    return {"public_key": PUBLIC_KEY_PEM, "fingerprint": PUBLIC_KEY_FINGERPRINT, "algorithm": "RSA-OAEP-SHA256 + AES-256-GCM"}
 
 
 @app.get("/health")

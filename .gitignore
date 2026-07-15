@@ -32,3 +32,6 @@ frontend/gatestack-preview.png
 Thumbs.db
 .idea/
 .vscode/
+
+# GateChat local security keys
+gatechat/backend/.gatechat-private-key.pem
