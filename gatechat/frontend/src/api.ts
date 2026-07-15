@@ -4,7 +4,7 @@ const backendPort = (import.meta.env.VITE_GATECHAT_BACKEND_PORT || "8013").trim(
 const configuredBackendUrl = import.meta.env.VITE_GATECHAT_BACKEND_URL?.trim();
 const API_BASE_URL = (configuredBackendUrl || `${serverProtocol}://${serverHost}:${backendPort}`).replace(/\/$/, "");
 const ENCRYPT_REQUESTS = (import.meta.env.VITE_GATECHAT_ENCRYPT_REQUESTS || "true").trim().toLowerCase() !== "false";
-const REQUIRE_HTTPS = (import.meta.env.VITE_GATECHAT_REQUIRE_HTTPS || "true").trim().toLowerCase() !== "false";
+const REQUIRE_HTTPS = (import.meta.env.VITE_GATECHAT_REQUIRE_HTTPS || "false").trim().toLowerCase() === "true";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 export interface ChatSettings {

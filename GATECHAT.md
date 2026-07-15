@@ -95,20 +95,20 @@ gatechat_messages
 
 GateChat cifra los cuerpos JSON que salen del navegador antes de enviarlos al backend. El frontend genera una llave AES-256-GCM por peticion, cifra el contenido y envuelve esa llave con la llave publica RSA-OAEP-SHA256 publicada por `/api/security/public-key`. El backend descifra el sobre en memoria antes de validar los modelos de FastAPI.
 
-Esto agrega una capa de confidencialidad sobre el cuerpo de la peticion, pero no reemplaza TLS: en redes no locales debes publicar GateChat detras de HTTPS valido para prevenir ataques man-in-the-middle contra la entrega inicial de la llave publica y contra las respuestas. Por defecto, el frontend y el backend exigen HTTPS para peticiones sensibles fuera de `localhost`.
+Esto agrega una capa de confidencialidad sobre el cuerpo de la peticion, pero no reemplaza TLS: en redes no locales HTTPS sigue siendo la proteccion completa contra ataques man-in-the-middle sobre la entrega inicial de la llave publica y contra las respuestas. Por ahora GateChat no exige HTTPS por defecto; puedes activarlo cuando tengas un proxy inverso o certificado listo.
 
 Variables utiles:
 
 ```txt
 GATECHAT_SECURITY_KEY_PATH=/ruta/segura/gatechat-private-key.pem
-GATECHAT_REQUIRE_HTTPS=true
+GATECHAT_REQUIRE_HTTPS=false
 GATECHAT_ALLOWED_ORIGINS=https://chat.tudominio.com
 VITE_GATECHAT_ENCRYPT_REQUESTS=true
-VITE_GATECHAT_REQUIRE_HTTPS=true
+VITE_GATECHAT_REQUIRE_HTTPS=false
 ```
 
 Notas:
 
 - `GATECHAT_SECURITY_KEY_PATH` permite persistir la llave privada RSA entre reinicios. Si no existe, GateChat crea una con permisos restrictivos.
 - `GATECHAT_ALLOWED_ORIGINS` debe limitarse al origen real del frontend en produccion; `*` queda solo como valor de desarrollo.
-- Para una proteccion anti-MITM completa, termina TLS en un proxy inverso o balanceador y envia `X-Forwarded-Proto: https` al backend.
+- Cuando quieras exigir HTTPS, cambia `GATECHAT_REQUIRE_HTTPS=true` y `VITE_GATECHAT_REQUIRE_HTTPS=true`, termina TLS en un proxy inverso o balanceador y envia `X-Forwarded-Proto: https` al backend.

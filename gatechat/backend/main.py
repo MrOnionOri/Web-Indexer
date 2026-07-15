@@ -36,7 +36,7 @@ DB_NAME = os.getenv("DB_NAME", "gatestack")
 OLLAMA_BASE_URL = os.getenv("GATECHAT_OLLAMA_BASE_URL", os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
 DEFAULT_MODEL = os.getenv("GATECHAT_DEFAULT_MODEL", "qwen2.5:7b-instruct")
 SECURITY_KEY_PATH = Path(os.getenv("GATECHAT_SECURITY_KEY_PATH", Path(__file__).resolve().parent / ".gatechat-private-key.pem"))
-REQUIRE_HTTPS = os.getenv("GATECHAT_REQUIRE_HTTPS", "true").lower() not in {"0", "false", "no"}
+REQUIRE_HTTPS = os.getenv("GATECHAT_REQUIRE_HTTPS", "false").lower() in {"1", "true", "yes"}
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("GATECHAT_ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
